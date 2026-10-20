@@ -1,0 +1,175 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ProductType {
+  FRAME
+  LENS
+  CONTACT
+  ACCESSORY
+}
+
+enum StockMovementType {
+  IN
+  OUT
+  ADJUST
+}
+
+enum OrderStatus {
+  NEW
+  LENS_ORDERED
+  PROCESSING
+  READY
+  DELIVERED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CASH
+  TRANSFER
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  name         String
+  createdAt    DateTime @default(now()) @map("created_at")
+  @@map("users")
+}
+
+model Customer {
+  id        String    @id @default(cuid())
+  name      String
+  phone     String    @unique
+  birthday  DateTime? @db.Date
+  gender    String?
+  address   String?
+  note      String?
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  eyeExams  EyeExam[]
+  orders    Order[]
+  @@index([phone])
+  @@map("customers")
+}
+
+model EyeExam {
+  id               String    @id @default(cuid())
+  customerId       String    @map("customer_id")
+  examDate         DateTime  @map("exam_date") @db.Date
+  examiner         String?
+  rSph             Decimal?  @map("r_sph") @db.Decimal(5, 2)
+  rCyl             Decimal?  @map("r_cyl") @db.Decimal(5, 2)
+  rAxis            Int?      @map("r_axis")
+  rAdd             Decimal?  @map("r_add") @db.Decimal(4, 2)
+  rPd              Decimal?  @map("r_pd") @db.Decimal(5, 2)
+  lSph             Decimal?  @map("l_sph") @db.Decimal(5, 2)
+  lCyl             Decimal?  @map("l_cyl") @db.Decimal(5, 2)
+  lAxis            Int?      @map("l_axis")
+  lAdd             Decimal?  @map("l_add") @db.Decimal(4, 2)
+  lPd              Decimal?  @map("l_pd") @db.Decimal(5, 2)
+  note             String?
+  nextReminderDate DateTime? @map("next_reminder_date") @db.Date
+  createdAt        DateTime  @default(now()) @map("created_at")
+  customer         Customer  @relation(fields: [customerId], references: [id])
+  orders           Order[]
+  @@index([nextReminderDate])
+  @@map("eye_exams")
+}
+
+model Product {
+  id             String          @id @default(cuid())
+  sku            String          @unique
+  barcode        String?
+  name           String
+  type           ProductType
+  brand          String?
+  costPrice      Int             @map("cost_price")
+  salePrice      Int             @map("sale_price")
+  stockQty       Int             @default(0) @map("stock_qty")
+  minStock       Int             @default(0) @map("min_stock")
+  supplier       String?
+  active         Boolean         @default(true)
+  deletedAt      DateTime?       @map("deleted_at")
+  stockMovements StockMovement[]
+  orderItems     OrderItem[]
+  @@map("products")
+}
+
+model StockMovement {
+  id        String            @id @default(cuid())
+  productId String            @map("product_id")
+  type      StockMovementType
+  qty       Int
+  orderId   String?           @map("order_id")
+  note      String?
+  createdAt DateTime          @default(now()) @map("created_at")
+  product   Product           @relation(fields: [productId], references: [id])
+  order     Order?            @relation(fields: [orderId], references: [id])
+  @@map("stock_movements")
+}
+
+model Order {
+  id            String          @id @default(cuid())
+  code          String          @unique
+  customerId    String          @map("customer_id")
+  eyeExamId     String?         @map("eye_exam_id")
+  status        OrderStatus     @default(NEW)
+  subtotal      Int
+  discount      Int             @default(0)
+  total         Int
+  deposit       Int             @default(0)
+  dueDate       DateTime?       @map("due_date") @db.Date
+  warrantyUntil DateTime?       @map("warranty_until") @db.Date
+  note          String?
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+  customer      Customer        @relation(fields: [customerId], references: [id])
+  eyeExam       EyeExam?        @relation(fields: [eyeExamId], references: [id])
+  items         OrderItem[]
+  payments      Payment[]
+  stockMovements StockMovement[]
+  @@index([status])
+  @@index([customerId])
+  @@map("orders")
+}
+
+model OrderItem {
+  id        String   @id @default(cuid())
+  orderId   String   @map("order_id")
+  productId String?  @map("product_id")
+  name      String
+  unitPrice Int      @map("unit_price")
+  qty       Int
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product   Product? @relation(fields: [productId], references: [id])
+  @@map("order_items")
+}
+
+model Payment {
+  id       String        @id @default(cuid())
+  orderId  String        @map("order_id")
+  amount   Int
+  method   PaymentMethod
+  paidAt   DateTime      @default(now()) @map("paid_at")
+  note     String?
+  order    Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  @@map("payments")
+}
+
+model Setting {
+  id             String @id @default(cuid())
+  storeName      String @map("store_name")
+  address        String?
+  phone          String?
+  invoiceTemplate String? @map("invoice_template")
+  reminderMonths Int    @default(12) @map("reminder_months")
+  @@map("settings")
+}
