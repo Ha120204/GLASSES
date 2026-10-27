@@ -1,0 +1,4 @@
+CREATE TYPE "OrderType" AS ENUM ('PREORDER', 'READY_SALE');
+
+ALTER TABLE "orders"
+  ADD COLUMN "order_type" "OrderType" NOT NULL DEFAULT 'PREORDER';

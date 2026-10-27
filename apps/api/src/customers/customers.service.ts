@@ -39,22 +39,53 @@ export class CustomersService {
   }
 
   async findOne(id: string) {
-    const customer = await this.prisma.customer.findFirst({
-      where: { id, deletedAt: null },
-      include: {
-        eyeExams: { orderBy: { examDate: 'desc' } },
-        orders: {
-          orderBy: { createdAt: 'desc' },
-          take: 10,
-          include: {
-            payments: { select: { amount: true } },
-            items: { select: { name: true, qty: true } },
+    const [customer, ordersTotal] = await this.prisma.$transaction([
+      this.prisma.customer.findFirst({
+        where: { id, deletedAt: null },
+        include: {
+          eyeExams: { where: { archivedAt: null }, orderBy: { examDate: 'desc' } },
+          orders: {
+            orderBy: { createdAt: 'desc' },
+            take: 10,
+            include: {
+              payments: { select: { amount: true } },
+              items: { select: { name: true, qty: true } },
+            },
           },
         },
-      },
-    });
+      }),
+      this.prisma.order.count({ where: { customerId: id } }),
+    ]);
     if (!customer) throw new NotFoundException('Không tìm thấy khách hàng.');
-    return { ...customer, latestEyeExam: customer.eyeExams[0] ?? null };
+    return { ...customer, ordersTotal, latestEyeExam: customer.eyeExams[0] ?? null };
+  }
+
+  async findDeleted(
+    query: CustomerQueryDto,
+  ): Promise<{ items: Customer[]; total: number; page: number; pageSize: number }> {
+    const q = query.q?.trim();
+    const normalizedPhone = q ? normalizePhone(q) : '';
+    const where: Prisma.CustomerWhereInput = {
+      deletedAt: { not: null },
+      ...(q
+        ? {
+            OR: [
+              { name: { contains: q, mode: 'insensitive' } },
+              { phone: { contains: normalizedPhone } },
+            ],
+          }
+        : {}),
+    };
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.customer.findMany({
+        where,
+        orderBy: { deletedAt: 'desc' },
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+      }),
+      this.prisma.customer.count({ where }),
+    ]);
+    return { items, total, page: query.page, pageSize: query.pageSize };
   }
 
   async create(dto: CreateCustomerDto): Promise<Customer> {
@@ -69,6 +100,34 @@ export class CustomersService {
   async remove(id: string): Promise<void> {
     await this.getActiveCustomer(id);
     await this.prisma.customer.update({ where: { id }, data: { deletedAt: new Date() } });
+  }
+
+  async removeMany(ids: string[]): Promise<{ count: number }> {
+    const result = await this.prisma.customer.updateMany({
+      where: { id: { in: [...new Set(ids)] }, deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
+    return { count: result.count };
+  }
+
+  async restore(id: string): Promise<Customer> {
+    const customer = await this.prisma.customer.findFirst({ where: { id, deletedAt: { not: null } } });
+    if (!customer) throw new NotFoundException('Không tìm thấy khách hàng trong thùng rác.');
+    return this.prisma.customer.update({ where: { id }, data: { deletedAt: null } });
+  }
+
+  async permanentlyRemove(id: string): Promise<void> {
+    const customer = await this.prisma.customer.findFirst({ where: { id, deletedAt: { not: null } } });
+    if (!customer) throw new NotFoundException('Không tìm thấy khách hàng trong thùng rác.');
+
+    const [eyeExamCount, orderCount] = await this.prisma.$transaction([
+      this.prisma.eyeExam.count({ where: { customerId: id } }),
+      this.prisma.order.count({ where: { customerId: id } }),
+    ]);
+    if (eyeExamCount > 0 || orderCount > 0) {
+      throw new ConflictException('Không thể xóa vĩnh viễn khách hàng đã có phiếu đo mắt hoặc đơn hàng.');
+    }
+    await this.prisma.customer.delete({ where: { id: customer.id } });
   }
 
   private async persist(dto: Partial<CreateCustomerDto>, id?: string): Promise<Customer> {

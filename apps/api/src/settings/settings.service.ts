@@ -3,7 +3,7 @@ import { Prisma, type Setting } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateSettingDto } from './dto/update-setting.dto';
 
-const defaultSetting = { storeName: 'Cửa hàng kính mắt', reminderMonths: 12 };
+const defaultSetting = { storeName: 'Cửa hàng kính mắt' };
 
 @Injectable()
 export class SettingsService {
@@ -21,7 +21,6 @@ export class SettingsService {
       ...(dto.address !== undefined ? { address: dto.address?.trim() || null } : {}),
       ...(dto.phone !== undefined ? { phone: dto.phone?.trim() || null } : {}),
       ...(dto.invoiceTemplate !== undefined ? { invoiceTemplate: dto.invoiceTemplate?.trim() || null } : {}),
-      ...(dto.reminderMonths !== undefined ? { reminderMonths: dto.reminderMonths } : {}),
     };
     return this.prisma.setting.update({ where: { id: setting.id }, data });
   }

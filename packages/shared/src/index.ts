@@ -5,18 +5,8 @@ export enum ProductType {
   ACCESSORY = 'ACCESSORY',
 }
 
-export enum StockMovementType {
-  IN = 'IN',
-  OUT = 'OUT',
-  ADJUST = 'ADJUST',
-}
-
 export enum OrderStatus {
   NEW = 'NEW',
-  LENS_ORDERED = 'LENS_ORDERED',
-  PROCESSING = 'PROCESSING',
-  READY = 'READY',
-  DELIVERED = 'DELIVERED',
   CANCELLED = 'CANCELLED',
 }
 
@@ -27,10 +17,6 @@ export enum PaymentMethod {
 
 export const orderStatusLabels: Record<OrderStatus, string> = {
   [OrderStatus.NEW]: 'Mới',
-  [OrderStatus.LENS_ORDERED]: 'Đã đặt tròng',
-  [OrderStatus.PROCESSING]: 'Đang gia công',
-  [OrderStatus.READY]: 'Sẵn sàng giao',
-  [OrderStatus.DELIVERED]: 'Đã giao',
   [OrderStatus.CANCELLED]: 'Đã hủy',
 };
 
@@ -59,11 +45,22 @@ export interface EyeExamValues {
   rAxis: number | null;
   rAdd: number | null;
   rPd: number | null;
+  pdTotal: number | null;
+  rPrism: number | null;
+  rBase: string | null;
+  rSegHeight: number | null;
   lSph: number | null;
   lCyl: number | null;
   lAxis: number | null;
   lAdd: number | null;
   lPd: number | null;
+  lPrism: number | null;
+  lBase: string | null;
+  lSegHeight: number | null;
+  wearingPurpose: string | null;
+  lensDesign: string | null;
+  noPrescription: boolean;
+  noPrescriptionReason: string | null;
 }
 
 export const formatDiopter = (value: number | null | undefined): string =>
@@ -87,4 +84,11 @@ export const formatRxDifference = (before: number | null, after: number | null):
   if (before === null || after === null) return '—';
   const difference = after - before;
   return difference === 0 ? 'Không đổi' : `${difference > 0 ? '+' : ''}${difference.toFixed(2)}`;
+};
+
+export const formatAxisDifference = (before: number | null, after: number | null): string => {
+  if (before === null || after === null) return '—';
+  const rawDifference = Math.abs(after - before) % 180;
+  const difference = Math.min(rawDifference, 180 - rawDifference);
+  return difference === 0 ? 'Không đổi' : `Đổi ${difference}°`;
 };

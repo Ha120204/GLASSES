@@ -15,15 +15,20 @@ export function CustomerEyeExamTab({ customerId }: { customerId: string }) {
   const [first, setFirst] = useState<string>();
   const [second, setSecond] = useState<string>();
   const createExam = (): void => router.push(`/eye-exams?customerId=${customerId}&create=1`);
+  const openComparison = (): void => {
+    setFirst(data[1]?.id);
+    setSecond(data[0]?.id);
+    setCompare(true);
+  };
 
   if (!isLoading && !data.length) {
-    return <Empty description="Chưa có phiếu đo mắt."><Button type="primary" icon={<PlusOutlined />} onClick={createExam}>Thêm phiếu đo</Button></Empty>;
+    return <Empty className="customer-eye-exams__empty" description="Chưa có phiếu đo mắt."><Button className="customer-eye-exams__create" type="primary" icon={<PlusOutlined />} onClick={createExam}>Thêm phiếu đo</Button></Empty>;
   }
 
   return <>
-    <Space style={{ marginBottom: 12 }}>
-      <Button type="primary" icon={<PlusOutlined />} onClick={createExam}>Thêm phiếu đo</Button>
-      <Button icon={<SwapOutlined />} onClick={() => setCompare(true)} disabled={data.length < 2}>So sánh</Button>
+    <Space className="customer-eye-exams__actions" size={8}>
+      <Button className="customer-eye-exams__create" type="primary" icon={<PlusOutlined />} onClick={createExam}>Thêm phiếu đo</Button>
+      <Button className="customer-eye-exams__compare" icon={<SwapOutlined />} onClick={openComparison} disabled={data.length < 2}>So sánh</Button>
     </Space>
     <Table<EyeExam>
       loading={isLoading}
@@ -35,7 +40,7 @@ export function CustomerEyeExamTab({ customerId }: { customerId: string }) {
         { title: 'Ngày đo', dataIndex: 'examDate', render: (value: string) => new Intl.DateTimeFormat('vi-VN').format(new Date(value)) },
         { title: 'OD', render: (_: unknown, exam: EyeExam) => formatRx(exam.rSph, exam.rCyl, exam.rAxis) },
         { title: 'OS', render: (_: unknown, exam: EyeExam) => formatRx(exam.lSph, exam.lCyl, exam.lAxis) },
-        { title: 'Người đo', dataIndex: 'examiner', render: (value: string | null) => value || '—' },
+        { title: 'PD', render: (_: unknown, exam: EyeExam) => exam.pdTotal !== null ? `Tổng ${exam.pdTotal} mm` : exam.rPd !== null && exam.lPd !== null ? `${exam.rPd} / ${exam.lPd} mm` : '—' },
       ]}
     />
     <EyeExamComparison

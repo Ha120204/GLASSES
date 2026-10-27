@@ -1,77 +1,26 @@
 'use client';
 
-import {
-  ArrowUpOutlined,
-  ClockCircleOutlined,
-  DollarOutlined,
-  ShoppingCartOutlined,
-  TeamOutlined,
-} from '@ant-design/icons';
-import { Card, Col, Empty, Row, Statistic, Tag, Typography } from 'antd';
+import { ArrowRightOutlined, CalendarOutlined, ClockCircleOutlined, DollarOutlined, FileTextOutlined, PlusOutlined, TeamOutlined, WarningOutlined } from '@ant-design/icons';
+import { Button, Card, Empty, Spin, Tag } from 'antd';
+import dayjs from 'dayjs';
+import type { ReactNode } from 'react';
+import { useRouter } from 'next/navigation';
+import { getErrorMessage, orderStatusColors, orderStatusLabels, type DashboardOverview, useDashboardOverviewQuery } from '@/store/api';
 
-const cards = [
-  { title: 'Doanh thu tháng', value: 0, prefix: <DollarOutlined />, color: '#e0f2fe' },
-  { title: 'Đơn kính mới', value: 0, prefix: <ShoppingCartOutlined />, color: '#dcfce7' },
-  { title: 'Khách hàng mới', value: 0, prefix: <TeamOutlined />, color: '#f3e8ff' },
-  { title: 'Đơn chờ xử lý', value: 0, prefix: <ClockCircleOutlined />, color: '#fef3c7' },
-];
+const formatMoney = (value: number): string => `${new Intl.NumberFormat('vi-VN').format(value)} đ`;
+function OverviewMetric({ icon, label, value, hint, tone }: { icon: ReactNode; label: string; value: string; hint: string; tone: string }) { return <Card className={`overview-metric overview-metric--${tone}`}><span>{icon}</span><div><small>{label}</small><strong>{value}</strong><em>{hint}</em></div></Card>; }
+function SalesChart({ data }: { data: DashboardOverview['dailySales'] }) { const max = Math.max(...data.map((item) => item.sales), 1); const dates = new Map(data.map((item) => [item.date, item.sales])); const days = Array.from({ length: 7 }, (_, index) => { const date = dayjs().subtract(6 - index, 'day').format('YYYY-MM-DD'); return { date, sales: dates.get(date) ?? 0 }; }); return <div className="overview-chart">{days.map((item) => <div key={item.date} title={`${dayjs(item.date).format('DD/MM')}: ${formatMoney(item.sales)}`}><i style={{ height: `${Math.max(item.sales ? 6 : 0, item.sales / max * 100)}%` }} /><span>{dayjs(item.date).format('dd')}</span></div>)}</div>; }
 
 export default function DashboardPage() {
-  return (
-    <>
-      <div className="page-heading">
-        <div>
-          <h1>Tổng quan</h1>
-          <p>Theo dõi nhanh hoạt động cửa hàng kính mắt.</p>
-        </div>
-        <Tag color="blue">Hôm nay</Tag>
-      </div>
-      <Row gutter={[20, 20]}>
-        {cards.map((card) => (
-          <Col xs={24} sm={12} xl={6} key={card.title}>
-            <Card className="stat-card">
-              <Statistic
-                title={card.title}
-                value={card.value}
-                prefix={
-                  <span
-                    style={{
-                      display: 'inline-grid',
-                      placeItems: 'center',
-                      width: 32,
-                      height: 32,
-                      marginRight: 8,
-                      borderRadius: 10,
-                      background: card.color,
-                    }}
-                  >
-                    {card.prefix}
-                  </span>
-                }
-                suffix={card.title.includes('Doanh thu') ? '₫' : ''}
-              />
-              <Typography.Text type="secondary">
-                <ArrowUpOutlined style={{ color: '#16a34a' }} /> Chưa có dữ liệu kỳ này
-              </Typography.Text>
-            </Card>
-          </Col>
-        ))}
-      </Row>
-      <Row gutter={[20, 20]} style={{ marginTop: 20 }}>
-        <Col xs={24} xl={14}>
-          <Card className="surface-card" title="Doanh thu gần đây">
-            <Empty description="Dữ liệu doanh thu sẽ hiển thị khi có đơn hàng." />
-          </Card>
-        </Col>
-        <Col xs={24} xl={10}>
-          <Card className="surface-card" title="Việc cần xử lý">
-            <Empty
-              image={Empty.PRESENTED_IMAGE_SIMPLE}
-              description="Không có công việc cần xử lý"
-            />
-          </Card>
-        </Col>
-      </Row>
-    </>
-  );
+  const router = useRouter();
+  const { data, isFetching, isError, error } = useDashboardOverviewQuery();
+  return <div className="product-page overview-page">
+    <header className="product-page__hero overview-page__hero"><div><span className="product-page__eyebrow">VẬN HÀNH HÔM NAY</span><h1>Tổng quan</h1><p>{data ? `Ngày ${dayjs(data.today).format('DD/MM/YYYY')} · tập trung vào các việc cần xử lý.` : 'Theo dõi nhanh hoạt động cửa hàng kính mắt.'}</p></div><Button className="product-create-button" type="primary" icon={<PlusOutlined />} onClick={() => router.push('/orders')}>Tạo đơn hàng</Button></header>
+    {isFetching && !data ? <div className="overview-loading"><Spin /></div> : isError ? <Card className="overview-error"><Empty description={getErrorMessage(error)} /></Card> : data ? <>
+      <section className="overview-metrics"><OverviewMetric tone="collected" icon={<DollarOutlined />} label="Tiền đã thu hôm nay" value={formatMoney(data.summary.collectedToday)} hint="Cọc, thanh toán và hoàn tiền" /><OverviewMetric tone="orders" icon={<FileTextOutlined />} label="Đơn mới hôm nay" value={`${data.summary.newOrders} đơn`} hint="Không gồm đơn đã hủy" /><OverviewMetric tone="outstanding" icon={<TeamOutlined />} label="Còn phải thu" value={formatMoney(data.summary.outstanding)} hint="Toàn bộ đơn đang mở" /><OverviewMetric tone="action" icon={<WarningOutlined />} label="Cần xử lý" value={`${data.summary.actionNeeded} đơn`} hint="Đang chờ hoàn tất" /></section>
+      <section className="overview-tasks"><div><strong>Việc cần làm ngay</strong><span>Chọn một nhóm để mở danh sách đơn tương ứng.</span></div><div className="overview-task-buttons"><Button className="overview-task overview-task--overdue" onClick={() => router.push('/orders?workFilter=OVERDUE')}><WarningOutlined /><span>Quá hẹn</span><b>{data.tasks.overdue}</b><ArrowRightOutlined /></Button><Button className="overview-task overview-task--today" onClick={() => router.push('/orders?workFilter=TODAY')}><CalendarOutlined /><span>Giao hôm nay</span><b>{data.tasks.dueToday}</b><ArrowRightOutlined /></Button><Button className="overview-task overview-task--action" onClick={() => router.push('/orders?workFilter=ACTION_NEEDED')}><ClockCircleOutlined /><span>Đang xử lý</span><b>{data.tasks.actionNeeded}</b><ArrowRightOutlined /></Button></div></section>
+      <section className="overview-grid"><Card className="overview-panel overview-recent" title="Đơn mới nhất" extra={<Button type="link" onClick={() => router.push('/orders')}>Xem tất cả</Button>}>{data.recentOrders.length ? <div className="overview-order-list">{data.recentOrders.map((order) => <button key={order.id} onClick={() => router.push('/orders')}><div><strong>{order.code}</strong><span>{order.customer.name} · {order.customer.phone}</span></div><div><em>{formatMoney(order.total)}</em><Tag color={orderStatusColors[order.status]}>{orderStatusLabels[order.status]}</Tag></div></button>)}</div> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Chưa có đơn hàng đang mở" />}</Card><Card className="overview-panel overview-sales" title="Doanh số 7 ngày" extra={<Button type="link" onClick={() => router.push('/reports')}>Xem báo cáo</Button>}><SalesChart data={data.dailySales} /></Card></section>
+      <section className="overview-quick-actions"><Button icon={<PlusOutlined />} onClick={() => router.push('/orders')}>Tạo đơn hàng</Button><Button icon={<FileTextOutlined />} onClick={() => router.push('/eye-exams')}>Tạo phiếu đo</Button><Button icon={<TeamOutlined />} onClick={() => router.push('/customers')}>Thêm khách hàng</Button></section>
+    </> : null}
+  </div>;
 }

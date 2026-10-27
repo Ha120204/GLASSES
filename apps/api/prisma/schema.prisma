@@ -14,12 +14,6 @@ enum ProductType {
   ACCESSORY
 }
 
-enum StockMovementType {
-  IN
-  OUT
-  ADJUST
-}
-
 enum OrderStatus {
   NEW
   LENS_ORDERED
@@ -29,9 +23,33 @@ enum OrderStatus {
   CANCELLED
 }
 
+enum OrderType {
+  PREORDER
+  READY_SALE
+}
+
 enum PaymentMethod {
   CASH
   TRANSFER
+}
+
+enum PaymentType {
+  PAYMENT
+  REFUND
+}
+
+enum UserRole {
+  ADMIN
+  STAFF
+}
+
+enum EyeExamAuditAction {
+  CREATED
+  UPDATED
+  LOCKED
+  UNLOCKED
+  ARCHIVED
+  RESTORED
 }
 
 model User {
@@ -39,7 +57,15 @@ model User {
   email        String   @unique
   passwordHash String   @map("password_hash")
   name         String
+  role         UserRole @default(ADMIN)
   createdAt    DateTime @default(now()) @map("created_at")
+  createdOrders Order[] @relation("OrderCreator")
+  cancelledOrders Order[] @relation("CancelledOrders")
+  orderPayments Payment[] @relation("OrderPayments")
+  orderStatusChanges OrderStatusHistory[] @relation("OrderStatusChangeActor")
+  eyeExamAuditLogs EyeExamAuditLog[] @relation("EyeExamAuditActor")
+  lockedEyeExams EyeExam[] @relation("EyeExamLocker")
+  archivedEyeExams EyeExam[] @relation("EyeExamArchiver")
   @@map("users")
 }
 
@@ -70,75 +96,116 @@ model EyeExam {
   rAxis            Int?      @map("r_axis")
   rAdd             Decimal?  @map("r_add") @db.Decimal(4, 2)
   rPd              Decimal?  @map("r_pd") @db.Decimal(5, 2)
+  pdTotal          Decimal?  @map("pd_total") @db.Decimal(5, 2)
+  rPrism           Decimal?  @map("r_prism") @db.Decimal(4, 2)
+  rBase            String?   @map("r_base") @db.VarChar(2)
+  rSegHeight       Decimal?  @map("r_seg_height") @db.Decimal(4, 1)
   lSph             Decimal?  @map("l_sph") @db.Decimal(5, 2)
   lCyl             Decimal?  @map("l_cyl") @db.Decimal(5, 2)
   lAxis            Int?      @map("l_axis")
   lAdd             Decimal?  @map("l_add") @db.Decimal(4, 2)
   lPd              Decimal?  @map("l_pd") @db.Decimal(5, 2)
+  lPrism           Decimal?  @map("l_prism") @db.Decimal(4, 2)
+  lBase            String?   @map("l_base") @db.VarChar(2)
+  lSegHeight       Decimal?  @map("l_seg_height") @db.Decimal(4, 1)
+  wearingPurpose   String?   @map("wearing_purpose")
+  lensDesign       String?   @map("lens_design")
+  noPrescription   Boolean   @default(false) @map("no_prescription")
+  noPrescriptionReason String? @map("no_prescription_reason")
   note             String?
-  nextReminderDate DateTime? @map("next_reminder_date") @db.Date
   createdAt        DateTime  @default(now()) @map("created_at")
+  lockedAt         DateTime? @map("locked_at")
+  lockedById       String?   @map("locked_by_id")
+  archivedAt       DateTime? @map("archived_at")
+  archivedById     String?   @map("archived_by_id")
   customer         Customer  @relation(fields: [customerId], references: [id])
+  lockedBy         User?     @relation("EyeExamLocker", fields: [lockedById], references: [id], onDelete: SetNull)
+  archivedBy       User?     @relation("EyeExamArchiver", fields: [archivedById], references: [id], onDelete: SetNull)
   orders           Order[]
-  @@index([nextReminderDate])
+  auditLogs        EyeExamAuditLog[]
+  @@index([archivedAt])
   @@map("eye_exams")
+}
+
+model EyeExamAuditLog {
+  id          String             @id @default(cuid())
+  eyeExamId   String             @map("eye_exam_id")
+  action      EyeExamAuditAction
+  changes     Json?              @db.JsonB
+  createdAt   DateTime           @default(now()) @map("created_at")
+  createdById String?            @map("created_by_id")
+  eyeExam     EyeExam            @relation(fields: [eyeExamId], references: [id], onDelete: Cascade)
+  createdBy   User?              @relation("EyeExamAuditActor", fields: [createdById], references: [id], onDelete: SetNull)
+  @@index([eyeExamId, createdAt])
+  @@index([createdById])
+  @@map("eye_exam_audit_logs")
 }
 
 model Product {
   id             String          @id @default(cuid())
   sku            String          @unique
-  barcode        String?
+  barcode        String?         @unique
   name           String
   type           ProductType
   brand          String?
   costPrice      Int             @map("cost_price")
   salePrice      Int             @map("sale_price")
-  stockQty       Int             @default(0) @map("stock_qty")
-  minStock       Int             @default(0) @map("min_stock")
   supplier       String?
   active         Boolean         @default(true)
   deletedAt      DateTime?       @map("deleted_at")
-  stockMovements StockMovement[]
   orderItems     OrderItem[]
   @@map("products")
-}
-
-model StockMovement {
-  id        String            @id @default(cuid())
-  productId String            @map("product_id")
-  type      StockMovementType
-  qty       Int
-  orderId   String?           @map("order_id")
-  note      String?
-  createdAt DateTime          @default(now()) @map("created_at")
-  product   Product           @relation(fields: [productId], references: [id])
-  order     Order?            @relation(fields: [orderId], references: [id])
-  @@map("stock_movements")
 }
 
 model Order {
   id            String          @id @default(cuid())
   code          String          @unique
   customerId    String          @map("customer_id")
+  createdById   String?         @map("created_by_id")
   eyeExamId     String?         @map("eye_exam_id")
+  prescriptionSnapshot Json?    @map("prescription_snapshot") @db.JsonB
+  orderType     OrderType       @default(PREORDER) @map("order_type")
   status        OrderStatus     @default(NEW)
   subtotal      Int
   discount      Int             @default(0)
   total         Int
   deposit       Int             @default(0)
+  depositMethod PaymentMethod?  @map("deposit_method")
   dueDate       DateTime?       @map("due_date") @db.Date
   warrantyUntil DateTime?       @map("warranty_until") @db.Date
   note          String?
+  cancellationReason String? @map("cancellation_reason")
+  cancelledAt   DateTime? @map("cancelled_at")
+  cancelledById String?   @map("cancelled_by_id")
   createdAt     DateTime        @default(now()) @map("created_at")
   updatedAt     DateTime        @updatedAt @map("updated_at")
   customer      Customer        @relation(fields: [customerId], references: [id])
+  createdBy     User?           @relation("OrderCreator", fields: [createdById], references: [id], onDelete: SetNull)
   eyeExam       EyeExam?        @relation(fields: [eyeExamId], references: [id])
   items         OrderItem[]
   payments      Payment[]
-  stockMovements StockMovement[]
+  cancelledBy   User?     @relation("CancelledOrders", fields: [cancelledById], references: [id], onDelete: SetNull)
+  statusHistory OrderStatusHistory[]
   @@index([status])
+  @@index([dueDate])
   @@index([customerId])
+  @@index([createdById])
   @@map("orders")
+}
+
+model OrderStatusHistory {
+  id          String      @id @default(cuid())
+  orderId     String      @map("order_id")
+  fromStatus  OrderStatus? @map("from_status")
+  toStatus    OrderStatus @map("to_status")
+  createdById String?     @map("created_by_id")
+  createdAt   DateTime    @default(now()) @map("created_at")
+  order       Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  createdBy   User?       @relation("OrderStatusChangeActor", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([orderId, createdAt])
+  @@index([createdById])
+  @@map("order_status_history")
 }
 
 model OrderItem {
@@ -158,9 +225,13 @@ model Payment {
   orderId  String        @map("order_id")
   amount   Int
   method   PaymentMethod
+  type     PaymentType @default(PAYMENT)
+  createdById String?  @map("created_by_id")
   paidAt   DateTime      @default(now()) @map("paid_at")
   note     String?
   order    Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  createdBy User?        @relation("OrderPayments", fields: [createdById], references: [id], onDelete: SetNull)
+  @@index([createdById])
   @@map("payments")
 }
 
@@ -170,6 +241,5 @@ model Setting {
   address        String?
   phone          String?
   invoiceTemplate String? @map("invoice_template")
-  reminderMonths Int    @default(12) @map("reminder_months")
   @@map("settings")
 }

@@ -14,7 +14,7 @@ async function main(): Promise<void> {
   await prisma.user.upsert({
     where: { email },
     update: {},
-    create: { email, name: 'Chủ cửa hàng', passwordHash: await bcrypt.hash(password, 12) },
+    create: { email, name: 'Chủ cửa hàng', role: 'ADMIN', passwordHash: await bcrypt.hash(password, 12) },
   });
 
   const setting = await prisma.setting.findFirst();

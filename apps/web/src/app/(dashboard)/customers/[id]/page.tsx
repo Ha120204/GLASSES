@@ -1,17 +1,15 @@
 'use client';
 
 import { ArrowLeftOutlined, EditOutlined, PhoneOutlined } from '@ant-design/icons';
-import { Button, Card, Descriptions, Empty, Spin, Table, Tabs, Tag } from 'antd';
+import { Button, Card, Descriptions, Empty, Spin, Table, Tabs, Tag, message } from 'antd';
 import { useParams, useRouter } from 'next/navigation';
-import { useCustomerQuery } from '@/store/api';
+import { useState } from 'react';
+import { CustomerForm } from '@/components/customer-form';
+import { getErrorMessage, type CustomerInput, useCustomerQuery, useUpdateCustomerMutation } from '@/store/api';
 import { CustomerEyeExamTab } from '@/components/customer-eye-exam-tab';
 
 const statusLabels: Record<string, string> = {
   NEW: 'Mới',
-  LENS_ORDERED: 'Đã đặt tròng',
-  PROCESSING: 'Đang gia công',
-  READY: 'Sẵn sàng giao',
-  DELIVERED: 'Đã giao',
   CANCELLED: 'Đã hủy',
 };
 
@@ -19,6 +17,19 @@ export default function CustomerDetailPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
   const { data, isLoading, isError } = useCustomerQuery(params.id);
+  const [formOpen, setFormOpen] = useState(false);
+  const [updateCustomer, updateState] = useUpdateCustomerMutation();
+  const [messageApi, contextHolder] = message.useMessage();
+  const save = async (values: CustomerInput): Promise<void> => {
+    if (!data) return;
+    try {
+      await updateCustomer({ id: data.id, data: values }).unwrap();
+      messageApi.success('Đã cập nhật khách hàng.');
+      setFormOpen(false);
+    } catch (error: unknown) {
+      messageApi.error(getErrorMessage(error));
+    }
+  };
   if (isLoading)
     return (
       <div style={{ display: 'grid', placeItems: 'center', minHeight: 360 }}>
@@ -71,7 +82,7 @@ export default function CustomerDetailPage() {
     },
     {
       key: 'exam',
-      label: `Đơn kính (${data.eyeExams.length})`,
+      label: `Phiếu đo mắt (${data.eyeExams.length})`,
       children: <CustomerEyeExamTab customerId={data.id} />,
     },
     {
@@ -110,6 +121,7 @@ export default function CustomerDetailPage() {
   ];
   return (
     <>
+      {contextHolder}
       <div className="page-heading">
         <div>
           <Button
@@ -125,11 +137,18 @@ export default function CustomerDetailPage() {
             <PhoneOutlined /> {data.phone}
           </p>
         </div>
-        <Button icon={<EditOutlined />}>Chỉnh sửa</Button>
+        <Button icon={<EditOutlined />} onClick={() => setFormOpen(true)}>Chỉnh sửa</Button>
       </div>
       <Card className="surface-card">
         <Tabs items={items} />
       </Card>
+      <CustomerForm
+        open={formOpen}
+        customer={data}
+        loading={updateState.isLoading}
+        onClose={() => setFormOpen(false)}
+        onSubmit={save}
+      />
     </>
   );
 }

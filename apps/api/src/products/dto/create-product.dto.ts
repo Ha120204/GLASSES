@@ -37,18 +37,6 @@ export class CreateProductDto {
   salePrice!: number;
 
   @IsOptional()
-  @Type(() => Number)
-  @IsInt({ message: 'Tồn đầu kỳ phải là số nguyên.' })
-  @Min(0, { message: 'Tồn đầu kỳ không được âm.' })
-  stockQty?: number;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt({ message: 'Tồn tối thiểu phải là số nguyên.' })
-  @Min(0, { message: 'Tồn tối thiểu không được âm.' })
-  minStock?: number;
-
-  @IsOptional()
   @IsString()
   @MaxLength(120)
   supplier?: string | null;
@@ -57,4 +45,9 @@ export class CreateProductDto {
   @Transform(({ value }: { value: unknown }) => value === 'true' || value === true)
   @IsBoolean()
   active?: boolean;
+
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) => value === 'true' || value === true)
+  @IsBoolean()
+  autoSku?: boolean;
 }

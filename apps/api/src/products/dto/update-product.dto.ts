@@ -40,12 +40,6 @@ export class UpdateProductDto {
   salePrice?: number;
 
   @IsOptional()
-  @Type(() => Number)
-  @IsInt({ message: 'Tồn tối thiểu phải là số nguyên.' })
-  @Min(0, { message: 'Tồn tối thiểu không được âm.' })
-  minStock?: number;
-
-  @IsOptional()
   @IsString()
   @MaxLength(120)
   supplier?: string | null;

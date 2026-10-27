@@ -10,7 +10,7 @@ interface LoginValues {
   password: string;
 }
 
-const highlights = ['Hồ sơ khách hàng tập trung', 'Phiếu đo và lịch tái khám', 'Quản lý sản phẩm, kho hàng'];
+const highlights = ['Hồ sơ khách hàng tập trung', 'Phiếu đo mắt', 'Quản lý sản phẩm và giá bán'];
 
 export default function LoginPage() {
   const router = useRouter();

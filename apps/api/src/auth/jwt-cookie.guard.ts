@@ -1,11 +1,12 @@
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
+import { UserRole } from '@prisma/client';
 import type { Request } from 'express';
 import { IS_PUBLIC_KEY } from './public.decorator';
 
 export interface AuthenticatedRequest extends Request {
-  user?: { sub: string; email: string; name: string };
+  user?: { sub: string; email: string; name: string; role: UserRole };
 }
 
 @Injectable()
@@ -30,6 +31,7 @@ export class JwtCookieGuard implements CanActivate {
         sub: string;
         email: string;
         name: string;
+        role: UserRole;
       }>(token);
       return true;
     } catch {
