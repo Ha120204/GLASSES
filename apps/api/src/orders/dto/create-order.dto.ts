@@ -1,6 +1,6 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { OrderType, PaymentMethod } from '@prisma/client';
-import { ArrayMinSize, IsArray, IsDateString, IsEnum, IsInt, IsNotEmpty, IsOptional, IsString, MaxLength, Min, ValidateNested } from 'class-validator';
+import { ArrayMinSize, IsArray, IsBoolean, IsDateString, IsEnum, IsInt, IsNotEmpty, IsOptional, IsString, IsUUID, MaxLength, Min, ValidateNested } from 'class-validator';
 
 export class CreateOrderItemDto {
   @IsString()
@@ -14,6 +14,9 @@ export class CreateOrderItemDto {
 }
 
 export class CreateOrderDto {
+  @IsUUID('4', { message: 'Mã yêu cầu tạo đơn hàng không hợp lệ.' })
+  idempotencyKey!: string;
+
   @IsOptional()
   @IsEnum(OrderType)
   orderType?: OrderType;
@@ -47,6 +50,11 @@ export class CreateOrderDto {
   @IsOptional()
   @IsEnum(PaymentMethod)
   depositMethod?: PaymentMethod;
+
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) => value === true || value === 'true')
+  @IsBoolean()
+  awaitingTransferPayment?: boolean;
 
   @IsOptional()
   @IsDateString()

@@ -12,12 +12,16 @@ export class OrderQueryDto {
   q?: string;
 
   @IsOptional()
-  @IsEnum(OrderStatus)
+  @IsEnum(OrderStatus, { message: 'Tình trạng đơn hàng không hợp lệ.' })
   status?: OrderStatus;
 
   @IsOptional()
-  @IsIn(['ACTION_NEEDED', 'TODAY', 'OVERDUE'])
-  workFilter?: 'ACTION_NEEDED' | 'TODAY' | 'OVERDUE';
+  @IsIn(['ACTIVE', 'ARCHIVED'], { message: 'Chế độ lưu trữ không hợp lệ.' })
+  archiveView: 'ACTIVE' | 'ARCHIVED' = 'ACTIVE';
+
+  @IsOptional()
+  @IsIn(['IN_PROGRESS', 'TODAY', 'OVERDUE'], { message: 'Bộ lọc công việc không hợp lệ.' })
+  workFilter?: 'IN_PROGRESS' | 'TODAY' | 'OVERDUE';
 
   @IsOptional()
   @Transform(({ value }: { value: unknown }) => value === true || value === 'true')
@@ -33,19 +37,19 @@ export class OrderQueryDto {
   dateTo?: string;
 
   @IsOptional()
-  @IsIn(['asc', 'desc'])
+  @IsIn(['asc', 'desc'], { message: 'Thứ tự sắp xếp không hợp lệ.' })
   sortDirection: 'asc' | 'desc' = 'desc';
 
   @IsOptional()
   @Type(() => Number)
-  @IsInt()
-  @Min(1)
+  @IsInt({ message: 'Số trang phải là số nguyên.' })
+  @Min(1, { message: 'Số trang phải từ 1 trở lên.' })
   page = 1;
 
   @IsOptional()
   @Transform(({ value }: { value: unknown }) => Number(value))
-  @IsInt()
-  @Min(1)
-  @Max(100)
+  @IsInt({ message: 'Số dòng mỗi trang phải là số nguyên.' })
+  @Min(1, { message: 'Số dòng mỗi trang phải từ 1 trở lên.' })
+  @Max(100, { message: 'Số dòng mỗi trang không được quá 100.' })
   pageSize = 10;
 }

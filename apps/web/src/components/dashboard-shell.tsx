@@ -8,7 +8,6 @@ import {
   DownOutlined,
   FileTextOutlined,
   LogoutOutlined,
-  MenuOutlined,
   SettingOutlined,
   ShoppingOutlined,
   TeamOutlined,
@@ -16,7 +15,6 @@ import {
 import {
   Avatar,
   Button,
-  Drawer,
   Dropdown,
   Layout,
   Menu,
@@ -25,7 +23,7 @@ import {
   type MenuProps,
 } from 'antd';
 import { usePathname, useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { canLeaveSettings } from '@/lib/settings-navigation';
 import { getErrorMessage, useLogoutMutation, useMeQuery } from '@/store/api';
 
 const { Header, Sider, Content } = Layout;
@@ -68,7 +66,7 @@ const navigation: MenuProps['items'] = [
   },
 ];
 
-function NavigationMenu({ onNavigate }: { onNavigate?: () => void }) {
+function NavigationMenu() {
   const pathname = usePathname();
   const router = useRouter();
   const selected = pathname.startsWith('/customers') ? '/customers' : pathname;
@@ -81,15 +79,14 @@ function NavigationMenu({ onNavigate }: { onNavigate?: () => void }) {
       selectedKeys={[selected]}
       items={navigation}
       onClick={({ key }) => {
+        if (key !== pathname && !canLeaveSettings()) return;
         router.push(key);
-        onNavigate?.();
       }}
     />
   );
 }
 
 export function DashboardShell({ children }: Readonly<{ children: React.ReactNode }>) {
-  const [mobileOpen, setMobileOpen] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
   const { data: user, isLoading } = useMeQuery();
@@ -97,6 +94,7 @@ export function DashboardShell({ children }: Readonly<{ children: React.ReactNod
   const [messageApi, contextHolder] = message.useMessage();
 
   const handleLogout = async (): Promise<void> => {
+    if (!canLeaveSettings()) return;
     try {
       await logout().unwrap();
       router.replace('/login');
@@ -105,7 +103,7 @@ export function DashboardShell({ children }: Readonly<{ children: React.ReactNod
     }
   };
 
-  const roleLabel = user?.role === 'ADMIN' ? 'Quản trị viên' : 'Nhân viên';
+  const roleLabel = 'Quản trị viên';
   const profileItems: MenuProps['items'] = [
     {
       key: 'profile-summary',
@@ -137,38 +135,13 @@ export function DashboardShell({ children }: Readonly<{ children: React.ReactNod
             <span className="app-logo__mark">
               <CustomerServiceOutlined />
             </span>
-            <span>Kính mắt Admin</span>
+            <span>Kính mắt Hướng Anh</span>
           </div>
         </div>
         <NavigationMenu />
       </Sider>
-      <Drawer
-        placement="left"
-        open={mobileOpen}
-        onClose={() => setMobileOpen(false)}
-        styles={{ body: { padding: 0, background: '#060e24' } }}
-        width={288}
-        closable={false}
-      >
-        <div style={{ height: 80, padding: '0 20px', display: 'flex', alignItems: 'center' }}>
-          <div className="app-logo">
-            <span className="app-logo__mark">
-              <CustomerServiceOutlined />
-            </span>
-            <span>Kính mắt Admin</span>
-          </div>
-        </div>
-        <NavigationMenu onNavigate={() => setMobileOpen(false)} />
-      </Drawer>
       <Layout>
         <Header className="dashboard-header">
-          <Button
-            className="mobile-menu"
-            type="text"
-            icon={<MenuOutlined />}
-            onClick={() => setMobileOpen(true)}
-            aria-label="Mở menu"
-          />
           <div className="dashboard-header__context">
             <span>TRANG QUẢN TRỊ</span>
             <strong>{pageTitleForPath(pathname)}</strong>
@@ -181,8 +154,8 @@ export function DashboardShell({ children }: Readonly<{ children: React.ReactNod
             trigger={['click']}
           >
             <Button className="dashboard-profile" type="text" aria-label="Mở menu tài khoản">
-              <Avatar>{user?.name.slice(0, 1).toUpperCase()}</Avatar>
-              <span><strong>{user?.name ?? 'Tài khoản'}</strong><small>{roleLabel}</small></span>
+              <Avatar size={36}>{user?.name.slice(0, 1).toUpperCase()}</Avatar>
+              <span className="dashboard-profile__identity"><strong>{user?.name ?? 'Tài khoản'}</strong><small>{roleLabel}</small></span>
               <DownOutlined />
             </Button>
           </Dropdown>

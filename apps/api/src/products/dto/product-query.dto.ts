@@ -1,5 +1,5 @@
 import { Transform, Type } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsEnum, IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 import { ProductType } from '@prisma/client';
 
 export class ProductQueryDto {
@@ -10,6 +10,14 @@ export class ProductQueryDto {
   @IsOptional()
   @IsEnum(ProductType)
   type?: ProductType;
+
+  @IsOptional()
+  @IsIn(['name', 'salePrice', 'costPrice'])
+  sortBy?: 'name' | 'salePrice' | 'costPrice';
+
+  @IsOptional()
+  @IsIn(['asc', 'desc'])
+  sortDirection?: 'asc' | 'desc';
 
   @IsOptional()
   @Type(() => Number)

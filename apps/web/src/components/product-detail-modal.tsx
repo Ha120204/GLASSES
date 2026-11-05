@@ -4,6 +4,7 @@ import { EditOutlined } from '@ant-design/icons';
 import { Button, Modal, Space } from 'antd';
 import type { ReactNode } from 'react';
 import type { Product, ProductType } from '@/store/api';
+import { ProductImage } from '@/components/product-image';
 
 const typeLabels: Record<ProductType, string> = {
   FRAME: 'Gọng kính',
@@ -39,9 +40,10 @@ export function ProductDetailModal({ product, open, onClose, onEdit }: ProductDe
     className="product-detail-modal"
     open={open}
     onCancel={onClose}
+    centered
     width={640}
     title={product ? <div className="product-detail-modal__heading">
-      <span className={`product-identity__initial product-identity__initial--${product.type.toLowerCase()}`}>{product.name.slice(0, 1).toUpperCase()}</span>
+      <ProductImage product={product} size="heading" />
       <div>
         <span>CHI TIẾT SẢN PHẨM</span>
         <strong>{product.name}</strong>
@@ -54,6 +56,10 @@ export function ProductDetailModal({ product, open, onClose, onEdit }: ProductDe
     </Space> : null}
   >
     {product && <>
+      <div className="product-detail-modal__image">
+        <ProductImage product={product} size="detail" alt={`Ảnh sản phẩm ${product.name}`} />
+        {!product.imageUpdatedAt && <span>Chưa có ảnh sản phẩm</span>}
+      </div>
       <div className="product-detail-modal__meta">
         <span className={`product-type product-type--${product.type.toLowerCase()}`}>{typeLabels[product.type]}</span>
         <span className={`product-status ${product.active ? 'product-status--active' : ''}`}><i />{product.active ? 'Đang kinh doanh' : 'Ngừng kinh doanh'}</span>

@@ -1,10 +1,10 @@
 'use client';
 
-import { CalendarOutlined, DownloadOutlined, EditOutlined, EyeOutlined, HistoryOutlined, InboxOutlined, MoreOutlined, PlusOutlined, PrinterOutlined, SearchOutlined, UnlockOutlined, UploadOutlined } from '@ant-design/icons';
-import { Avatar, Button, Card, DatePicker, Dropdown, Input, Modal, Select, Space, Table, message, type MenuProps } from 'antd';
+import { CalendarOutlined, DownloadOutlined, EditOutlined, EyeOutlined, InboxOutlined, MoreOutlined, PlusOutlined, PrinterOutlined, SearchOutlined, UnlockOutlined, UploadOutlined } from '@ant-design/icons';
+import { Alert, Avatar, Button, Card, DatePicker, Dropdown, Input, Modal, Select, Space, Table, message, type MenuProps } from 'antd';
 import dayjs from 'dayjs';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { useEffect, useRef, useState } from 'react';
 import { formatRx } from '@glasses/shared';
 import { EyeExamArchiveModal } from '@/components/eye-exam-archive-modal';
 import { EyeExamDetailModal } from '@/components/eye-exam-detail-modal';
@@ -16,11 +16,12 @@ import {
   getErrorMessage,
   type EyeExam,
   type EyeExamInput,
+  type EyeExamSortBy,
   type EyeExamStatusFilter,
   useArchiveEyeExamMutation,
   useBulkArchiveEyeExamsMutation,
   useCreateEyeExamMutation,
-  useCustomersQuery,
+  useCustomerQuery,
   useEyeExamsQuery,
   useFinalizeExistingEyeExamMutation,
   useFinalizeEyeExamMutation,
@@ -29,27 +30,44 @@ import {
   useUpdateEyeExamMutation,
 } from '@/store/api';
 
+const isExamDate = (value: string | null): value is string => Boolean(value && /^\d{4}-\d{2}-\d{2}$/.test(value) && dayjs(value).isValid() && dayjs(value).format('YYYY-MM-DD') === value);
+const pageSizes = [10, 20, 50, 100];
+
 export default function EyeExamsPage() {
   const router = useRouter();
+  const pathname = usePathname();
   const search = useSearchParams();
-  const [q, setQ] = useState('');
-  const [dateRange, setDateRange] = useState<[string, string] | undefined>();
-  const [status, setStatus] = useState<EyeExamStatusFilter | undefined>();
-  const [customerId, setCustomerId] = useState<string | undefined>();
-  const [customerQuery, setCustomerQuery] = useState('');
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  const queryString = search.toString();
+  const q = search.get('q') ?? '';
+  const [qInput, setQInput] = useState(q);
+  const searchResetPending = useRef(false);
+  const dateFrom = search.get('dateFrom');
+  const dateTo = search.get('dateTo');
+  const dateRange: [string, string] | undefined = isExamDate(dateFrom) && isExamDate(dateTo) && dateFrom <= dateTo ? [dateFrom, dateTo] : undefined;
+  const rawStatus = search.get('status');
+  const status: EyeExamStatusFilter | undefined = rawStatus === 'DRAFT' || rawStatus === 'LOCKED' ? rawStatus : undefined;
+  const customerId = search.get('customerId') || undefined;
+  const requestedPage = Number(search.get('page'));
+  const page = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+  const requestedPageSize = Number(search.get('pageSize'));
+  const pageSize = pageSizes.includes(requestedPageSize) ? requestedPageSize : 10;
+  const rawSortBy = search.get('sortBy');
+  const sortBy: EyeExamSortBy = rawSortBy === 'customerName' || rawSortBy === 'status' ? rawSortBy : 'examDate';
+  const sortDirection = search.get('sortDirection') === 'asc' ? 'asc' : 'desc';
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [open, setOpen] = useState(false);
+  const [localOpen, setOpen] = useState(false);
+  const createOpen = search.get('create') === '1';
+  const open = createOpen || localOpen;
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [selected, setSelected] = useState<EyeExam | null>(null);
+  const activeExam = createOpen ? null : selected;
   const [detailExamId, setDetailExamId] = useState<string | null>(null);
   const [printExamId, setPrintExamId] = useState<string | null>(null);
   const [historyExam, setHistoryExam] = useState<EyeExam | null>(null);
   const [messageApi, holder] = message.useMessage();
-  const { data, isFetching, isError } = useEyeExamsQuery({ q: q || undefined, customerId, dateFrom: dateRange?.[0], dateTo: dateRange?.[1], status, page, pageSize });
-  const { data: customers, isFetching: isFetchingCustomers } = useCustomersQuery({ q: customerQuery || undefined, page: 1, pageSize: 20 });
+  const { data, isFetching, isError, refetch: refetchExams } = useEyeExamsQuery({ q: q || undefined, customerId, dateFrom: dateRange?.[0], dateTo: dateRange?.[1], status, sortBy, sortDirection, page, pageSize });
+  const { data: selectedCustomer } = useCustomerQuery(customerId ?? '', { skip: !customerId });
   const [create, createState] = useCreateEyeExamMutation();
   const [finalize, finalizeState] = useFinalizeEyeExamMutation();
   const [update, updateState] = useUpdateEyeExamMutation();
@@ -60,37 +78,66 @@ export default function EyeExamsPage() {
   const [bulkArchive, bulkArchiveState] = useBulkArchiveEyeExamsMutation();
 
   useEffect(() => {
-    if (search.get('create') === '1') {
-      setSelected(null);
-      setOpen(true);
+    const syncFromHistory = (): void => {
+      setQInput(new URLSearchParams(window.location.search).get('q') ?? '');
+    };
+    window.addEventListener('popstate', syncFromHistory);
+    return () => window.removeEventListener('popstate', syncFromHistory);
+  }, []);
+  useEffect(() => {
+    if (searchResetPending.current) {
+      if (q) return;
+      searchResetPending.current = false;
     }
-  }, [search]);
+    if (qInput.trim() === q) return;
+    const timer = window.setTimeout(() => {
+      const params = new URLSearchParams(queryString);
+      if (qInput.trim()) params.set('q', qInput.trim()); else params.delete('q');
+      params.delete('page');
+      router.replace(`${pathname}${params.size ? `?${params.toString()}` : ''}`, { scroll: false });
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [pathname, q, qInput, queryString, router]);
+  useEffect(() => { setSelectedIds([]); }, [queryString]);
 
   const closeForm = (): void => {
     setOpen(false);
-    if (search.get('create') === '1') router.replace('/eye-exams');
+    setSelected(null);
+    if (createOpen) {
+      const params = new URLSearchParams(queryString);
+      params.delete('create');
+      router.replace(`${pathname}${params.size ? `?${params.toString()}` : ''}`, { scroll: false });
+    }
   };
 
-  const resetFilters = (): void => {
-    setQ('');
-    setDateRange(undefined);
-    setStatus(undefined);
-    setCustomerId(undefined);
-    setCustomerQuery('');
-    setPage(1);
+  const updateFilters = (changes: Record<string, string | undefined>): void => {
+    const params = new URLSearchParams(queryString);
+    if (qInput.trim()) params.set('q', qInput.trim()); else params.delete('q');
+    Object.entries(changes).forEach(([key, value]) => { if (value) params.set(key, value); else params.delete(key); });
+    if (!Object.hasOwn(changes, 'page')) params.delete('page');
+    router.push(`${pathname}${params.size ? `?${params.toString()}` : ''}`, { scroll: false });
     setSelectedIds([]);
   };
 
-  const hasFilters = Boolean(q || dateRange || status || customerId);
-  const exportExams = (ids?: string[]): void => { const params = new URLSearchParams(); if (ids?.length) params.set('ids', ids.join(',')); else { if (q) params.set('q', q); if (customerId) params.set('customerId', customerId); if (dateRange?.[0]) params.set('dateFrom', dateRange[0]); if (dateRange?.[1]) params.set('dateTo', dateRange[1]); if (status) params.set('status', status); } window.location.assign(`/api/eye-exams/export${params.size ? `?${params.toString()}` : ''}`); };
+  const resetFilters = (): void => {
+    const params = new URLSearchParams(queryString);
+    ['q', 'dateFrom', 'dateTo', 'status', 'customerId', 'page'].forEach((key) => params.delete(key));
+    searchResetPending.current = true;
+    setQInput('');
+    router.push(`${pathname}${params.size ? `?${params.toString()}` : ''}`, { scroll: false });
+    setSelectedIds([]);
+  };
 
-  const save = async (values: EyeExamInput, intent: 'draft' | 'finalize'): Promise<void> => {
+  const hasFilters = Boolean(qInput.trim() || q || dateRange || status || customerId);
+  const exportExams = (ids?: string[]): void => { const params = new URLSearchParams(); if (ids?.length) params.set('ids', ids.join(',')); else { if (q) params.set('q', q); if (customerId) params.set('customerId', customerId); if (dateRange?.[0]) params.set('dateFrom', dateRange[0]); if (dateRange?.[1]) params.set('dateTo', dateRange[1]); if (status) params.set('status', status); } params.set('sortBy', sortBy); params.set('sortDirection', sortDirection); window.location.assign(`/api/eye-exams/export${params.size ? `?${params.toString()}` : ''}`); };
+
+  const save = async (values: EyeExamInput, intent: 'draft' | 'finalize', idempotencyKey: string): Promise<void> => {
     try {
-      if (selected) {
-        if (intent === 'finalize') await finalizeExisting({ id: selected.id, data: values }).unwrap();
-        else await update({ id: selected.id, data: values }).unwrap();
-      } else if (intent === 'finalize') await finalize(values).unwrap();
-      else await create(values).unwrap();
+      if (activeExam) {
+        if (intent === 'finalize') await finalizeExisting({ id: activeExam.id, data: values }).unwrap();
+        else await update({ id: activeExam.id, data: values }).unwrap();
+      } else if (intent === 'finalize') await finalize({ ...values, idempotencyKey }).unwrap();
+      else await create({ ...values, idempotencyKey }).unwrap();
       messageApi.success(intent === 'finalize' ? 'Đã chốt phiếu đo.' : 'Đã lưu bản nháp.');
       closeForm();
     } catch (error: unknown) {
@@ -171,8 +218,7 @@ export default function EyeExamsPage() {
       if (key === 'print') {
         setDetailExamId(null);
         setPrintExamId(exam.id);
-      } else if (key === 'history') setHistoryExam(exam);
-      else if (key === 'unlock') unlockExam(exam);
+      } else if (key === 'unlock') unlockExam(exam);
       else if (key === 'edit') {
         setSelected(exam);
         setOpen(true);
@@ -197,46 +243,37 @@ export default function EyeExamsPage() {
     {holder}
     <Card className="eye-exams-workspace" styles={{ body: { padding: 0 } }}>
       <div className="eye-exams-toolbar">
-        <div className="eye-exams-toolbar__intro">
-          <span className="eye-exams-toolbar__icon"><CalendarOutlined /></span>
-          <div><strong>Danh sách phiếu đo</strong><span>Theo dõi các phiếu đo của khách hàng.</span></div>
+        <div className="eye-exams-toolbar__header">
+          <div className="eye-exams-toolbar__intro">
+            <span className="eye-exams-toolbar__icon"><CalendarOutlined /></span>
+            <div><strong>Danh sách phiếu đo</strong><span>Theo dõi các phiếu đo của khách hàng.</span></div>
+          </div>
+          <div className="eye-exams-toolbar__meta">
+            {customerId ? <span className="eye-exams-toolbar__customer-context">Khách: <strong>{selectedCustomer?.name ?? 'Đang tải...'}</strong></span> : null}
+            <span className="eye-exams-toolbar__summary">Có <b>{data?.total ?? 0}</b> phiếu đang hoạt động</span>
+          </div>
         </div>
         <div className="eye-exams-toolbar__filters">
-          <Input className="eye-exams-search" prefix={<SearchOutlined />} allowClear value={q} onChange={(event) => { setQ(event.target.value); setPage(1); setSelectedIds([]); }} placeholder="Tìm tên hoặc số điện thoại" />
+          <Input className="eye-exams-search" prefix={<SearchOutlined />} allowClear value={qInput} onChange={(event) => setQInput(event.target.value)} placeholder="Tìm mã phiếu, tên hoặc số điện thoại" aria-label="Tìm phiếu đo theo mã, tên hoặc số điện thoại" />
           <DatePicker.RangePicker
             className="eye-exams-date-filter"
             value={dateRange ? [dayjs(dateRange[0]), dayjs(dateRange[1])] : null}
             format="DD/MM/YYYY"
             placeholder={['Từ ngày', 'Đến ngày']}
-            onChange={(values) => { const [from, to] = values ?? []; setDateRange(from && to ? [from.format('YYYY-MM-DD'), to.format('YYYY-MM-DD')] : undefined); setPage(1); setSelectedIds([]); }}
+            onChange={(values) => { const [from, to] = values ?? []; updateFilters({ dateFrom: from && to ? from.format('YYYY-MM-DD') : undefined, dateTo: from && to ? to.format('YYYY-MM-DD') : undefined }); }}
           />
-          <Select<EyeExamStatusFilter>
-            className="eye-exams-status-filter"
-            allowClear
-            placeholder="Trạng thái"
-            value={status}
-            options={[{ value: 'DRAFT', label: 'Bản nháp' }, { value: 'LOCKED', label: 'Đã chốt' }]}
-            onChange={(value) => { setStatus(value); setPage(1); setSelectedIds([]); }}
-          />
-          <Select
-            className="eye-exams-customer-filter"
-            allowClear
-            showSearch
-            filterOption={false}
-            popupMatchSelectWidth={300}
-            loading={isFetchingCustomers}
-            placeholder="Khách hàng"
-            value={customerId}
-            onSearch={setCustomerQuery}
-            options={(customers?.items ?? []).map((customer) => ({
-              value: customer.id,
-              label: <span className="eye-exams-customer-option"><strong>{customer.name}</strong><span>{customer.phone}</span></span>,
-            }))}
-            onChange={(value) => { setCustomerId(value); setPage(1); setSelectedIds([]); }}
-          />
-          {hasFilters ? <Button className="eye-exams-clear-filters" type="link" onClick={resetFilters}>Xóa lọc</Button> : null}
+          <div className="eye-exams-toolbar__status-actions">
+            <Select<EyeExamStatusFilter>
+              className="eye-exams-status-filter"
+              allowClear
+              placeholder="Trạng thái"
+              value={status}
+              options={[{ value: 'DRAFT', label: 'Bản nháp' }, { value: 'LOCKED', label: 'Đã chốt' }]}
+              onChange={(value) => updateFilters({ status: value })}
+            />
+            {hasFilters ? <Button className="eye-exams-clear-filters" type="link" onClick={resetFilters}>Xóa lọc</Button> : null}
+          </div>
         </div>
-        <span className="eye-exams-toolbar__summary">Có <b>{data?.total ?? 0}</b> phiếu đang hoạt động</span>
       </div>
       {selectedIds.length > 0 && <div className="eye-exams-bulk-actions">
         <strong>Đã chọn {selectedIds.length} phiếu đo</strong>
@@ -246,6 +283,7 @@ export default function EyeExamsPage() {
           <Button danger icon={<InboxOutlined />} loading={bulkArchiveState.isLoading} onClick={archiveSelected}>Lưu trữ đã chọn</Button>
         </Space>
       </div>}
+      {isError ? <Alert className="eye-exams-error" type="error" showIcon message="Không thể tải danh sách phiếu đo." action={<Button size="small" loading={isFetching} onClick={() => void refetchExams()}>Thử lại</Button>} /> : null}
       <Table<EyeExam>
         className="eye-exams-table"
         rowKey="id"
@@ -253,26 +291,37 @@ export default function EyeExamsPage() {
         dataSource={data?.items}
         rowSelection={{ selectedRowKeys: selectedIds, onChange: (keys) => setSelectedIds(keys.map(String)), columnWidth: 48 }}
         onRow={(exam) => ({ onClick: () => setDetailExamId(exam.id) })}
-        scroll={{ x: 1140 }}
-        locale={{ emptyText: isError ? 'Không thể tải danh sách phiếu đo. Vui lòng thử lại.' : 'Chưa có phiếu đo mắt nào.' }}
+        onChange={(_pagination, _filters, sorting, extra) => {
+          if (extra.action !== 'sort') return;
+          const next = Array.isArray(sorting) ? sorting[0] : sorting;
+          const nextSortBy = next.columnKey === 'customerName' || next.columnKey === 'status' ? next.columnKey : 'examDate';
+          updateFilters({ sortBy: next.order && nextSortBy !== 'examDate' ? nextSortBy : undefined, sortDirection: next.order === 'ascend' ? 'asc' : undefined });
+        }}
+        scroll={{ x: 1270 }}
+        locale={{
+          emptyText: isError ? 'Danh sách chưa được tải.' : 'Chưa có phiếu đo mắt nào.',
+          triggerAsc: 'Nhấn để sắp xếp tăng dần',
+          triggerDesc: 'Nhấn để sắp xếp giảm dần',
+          cancelSort: 'Nhấn để bỏ sắp xếp',
+        }}
         pagination={{
-          current: data?.page ?? page, total: data?.total, pageSize: data?.pageSize ?? pageSize,
-          showSizeChanger: true, pageSizeOptions: [10, 20, 50, 100], locale: { items_per_page: '/ trang' },
-          onChange: (nextPage, nextPageSize) => { setPage(nextPageSize === pageSize ? nextPage : 1); setPageSize(nextPageSize); setSelectedIds([]); },
+          current: page, total: data?.total, pageSize,
+          showSizeChanger: { showSearch: false }, pageSizeOptions: [10, 20, 50, 100], locale: { items_per_page: '/ trang' },
+          onChange: (nextPage, nextPageSize) => updateFilters({ page: nextPageSize === pageSize && nextPage > 1 ? String(nextPage) : undefined, pageSize: nextPageSize > 10 ? String(nextPageSize) : undefined }),
         }}
         columns={[
           { title: 'STT', key: 'index', width: 66, render: (_: unknown, _exam: EyeExam, index: number) => <span className="eye-exam-index">{(page - 1) * pageSize + index + 1}</span> },
-          { title: 'Ngày đo', dataIndex: 'examDate', width: 142, render: (value: string) => <div className="eye-exam-date"><strong>{new Intl.DateTimeFormat('vi-VN', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(value))}</strong><span>Phiếu đo khúc xạ</span></div> },
-          { title: 'Khách hàng', width: 250, render: (_: unknown, exam: EyeExam) => <div className="eye-exam-customer"><Avatar>{exam.customer?.name.slice(0, 1).toUpperCase() ?? '?'}</Avatar><div><strong>{exam.customer?.name ?? 'Khách hàng đã xóa'}</strong><span>{exam.customer?.phone ?? 'Không có số điện thoại'}</span></div></div> },
+          { title: 'Mã phiếu', dataIndex: 'code', width: 130 },
+          { title: 'Ngày đo', dataIndex: 'examDate', key: 'examDate', width: 142, sorter: true, sortDirections: ['descend', 'ascend', 'descend'], sortOrder: sortBy === 'examDate' ? sortDirection === 'asc' ? 'ascend' : 'descend' : null, render: (value: string) => <div className="eye-exam-date"><strong>{new Intl.DateTimeFormat('vi-VN', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(value))}</strong><span>Phiếu đo khúc xạ</span></div> },
+          { title: 'Khách hàng', key: 'customerName', width: 250, sorter: true, sortDirections: ['ascend', 'descend', 'ascend'], sortOrder: sortBy === 'customerName' ? sortDirection === 'asc' ? 'ascend' : 'descend' : null, render: (_: unknown, exam: EyeExam) => <div className="eye-exam-customer"><Avatar>{exam.customer?.name.slice(0, 1).toUpperCase() ?? '?'}</Avatar><div><strong>{exam.customer?.name ?? 'Khách hàng đã xóa'}</strong><span>{exam.customer?.phone ?? 'Không có số điện thoại'}</span></div></div> },
           { title: 'Mắt phải · OD', width: 200, render: (_: unknown, exam: EyeExam) => <span className="eye-exam-rx">{formatRx(exam.rSph, exam.rCyl, exam.rAxis)}</span> },
           { title: 'Mắt trái · OS', width: 200, render: (_: unknown, exam: EyeExam) => <span className="eye-exam-rx">{formatRx(exam.lSph, exam.lCyl, exam.lAxis)}</span> },
-          { title: 'Trạng thái', width: 120, render: (_: unknown, exam: EyeExam) => <span className={exam.lockedAt ? 'eye-exam-status eye-exam-status--locked' : 'eye-exam-status'}><i />{exam.lockedAt ? 'Đã chốt' : 'Bản nháp'}</span> },
+          { title: 'Trạng thái', key: 'status', width: 120, sorter: true, sortDirections: ['ascend', 'descend', 'ascend'], sortOrder: sortBy === 'status' ? sortDirection === 'asc' ? 'ascend' : 'descend' : null, render: (_: unknown, exam: EyeExam) => <span className={exam.lockedAt ? 'eye-exam-status eye-exam-status--locked' : 'eye-exam-status'}><i />{exam.lockedAt ? 'Đã chốt' : 'Bản nháp'}</span> },
           {
             title: '', width: 104, align: 'center',
             render: (_: unknown, exam: EyeExam) => {
               const items: MenuProps['items'] = [
                 ...(exam.lockedAt ? [{ key: 'print', icon: <PrinterOutlined />, label: 'In phiếu' }] : []),
-                { key: 'history', icon: <HistoryOutlined />, label: 'Xem lịch sử' },
                 ...(exam.lockedAt
                   ? [{ key: 'unlock', icon: <UnlockOutlined />, label: 'Mở chốt phiếu' }]
                   : [{ key: 'edit', icon: <EditOutlined />, label: 'Chỉnh sửa' }]),
@@ -285,10 +334,11 @@ export default function EyeExamsPage() {
         ]}
       />
     </Card>
-    <EyeExamForm open={open} exam={selected} customerId={search.get('customerId') ?? undefined} onClose={closeForm} onSubmit={save} loading={createState.isLoading || finalizeState.isLoading || updateState.isLoading || finalizeExistingState.isLoading} />
+    <EyeExamForm open={open} exam={activeExam} customerId={search.get('customerId') ?? undefined} onClose={closeForm} onSubmit={save} loading={createState.isLoading || finalizeState.isLoading || updateState.isLoading || finalizeExistingState.isLoading} />
     <EyeExamDetailModal
       examId={detailExamId}
       onClose={() => setDetailExamId(null)}
+      onViewHistory={setHistoryExam}
       onEdit={(exam) => { setDetailExamId(null); setSelected(exam); setOpen(true); }}
       onFinalize={finalizeDraft}
       finalizing={lockState.isLoading}

@@ -60,6 +60,33 @@ export class ProductsController {
     return this.productsService.findOne(id);
   }
 
+  @Get(':id/image')
+  @Header('Cache-Control', 'private, no-store')
+  @Header('X-Content-Type-Options', 'nosniff')
+  async getImage(@Param('id') id: string) {
+    const image = await this.productsService.getImage(id);
+    return new StreamableFile(Buffer.from(image.content), { type: image.mimeType });
+  }
+
+  @Get(':id/image/thumbnail')
+  @Header('Cache-Control', 'private, no-store')
+  @Header('X-Content-Type-Options', 'nosniff')
+  async getImageThumbnail(@Param('id') id: string) {
+    const image = await this.productsService.getImage(id, 'thumbnail');
+    return new StreamableFile(Buffer.from(image.content), { type: image.mimeType });
+  }
+
+  @Post(':id/image')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 5 * 1024 * 1024 } }))
+  saveImage(@Param('id') id: string, @UploadedFile() file?: Express.Multer.File) {
+    return this.productsService.saveImage(id, file);
+  }
+
+  @Delete(':id/image')
+  removeImage(@Param('id') id: string) {
+    return this.productsService.removeImage(id);
+  }
+
   @Post()
   create(@Body() dto: CreateProductDto) {
     return this.productsService.create(dto);

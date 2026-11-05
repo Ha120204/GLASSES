@@ -9,7 +9,9 @@ import { getErrorMessage, type CustomerInput, useCustomerQuery, useUpdateCustome
 import { CustomerEyeExamTab } from '@/components/customer-eye-exam-tab';
 
 const statusLabels: Record<string, string> = {
-  NEW: 'Mới',
+  IN_PROGRESS: 'Đang thực hiện',
+  AWAITING_PAYMENT: 'Chờ thanh toán QR',
+  DELIVERED: 'Đã giao · hoàn tất',
   CANCELLED: 'Đã hủy',
 };
 
@@ -83,7 +85,7 @@ export default function CustomerDetailPage() {
     {
       key: 'exam',
       label: `Phiếu đo mắt (${data.eyeExams.length})`,
-      children: <CustomerEyeExamTab customerId={data.id} />,
+      children: <CustomerEyeExamTab customerId={data.id} exams={data.eyeExams} />,
     },
     {
       key: 'orders',
@@ -99,7 +101,7 @@ export default function CustomerDetailPage() {
             {
               title: 'Trạng thái',
               dataIndex: 'status',
-              render: (status: string) => <Tag color="blue">{statusLabels[status] ?? status}</Tag>,
+              render: (status: string, order: typeof data.orders[number]) => <div className="customer-profile__order-tags"><Tag color="blue">{statusLabels[status] ?? status}</Tag>{order.archivedAt ? <Tag>Đã lưu trữ</Tag> : null}</div>,
             },
             {
               title: 'Tổng tiền',

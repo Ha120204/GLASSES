@@ -5,7 +5,7 @@ import './globals.css';
 import { Providers } from '@/store/providers';
 
 export const metadata: Metadata = {
-  title: 'Kính mắt Admin',
+  title: 'Kính mắt Hướng Anh',
   description: 'Quản trị cửa hàng kính mắt',
 };
 

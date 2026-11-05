@@ -1,8 +1,9 @@
 'use client';
 
 import { LockOutlined, MailOutlined } from '@ant-design/icons';
-import { Button, Form, Input, Typography, message } from 'antd';
+import { Alert, Button, Form, Input, Typography, message } from 'antd';
 import { useRouter } from 'next/navigation';
+import { useEffect, useState } from 'react';
 import { getErrorMessage, useLoginMutation } from '@/store/api';
 
 interface LoginValues {
@@ -14,8 +15,13 @@ const highlights = ['Hồ sơ khách hàng tập trung', 'Phiếu đo mắt', 'Q
 
 export default function LoginPage() {
   const router = useRouter();
+  const [sessionExpired, setSessionExpired] = useState(false);
   const [login, { isLoading }] = useLoginMutation();
   const [messageApi, contextHolder] = message.useMessage();
+
+  useEffect(() => {
+    setSessionExpired(new URLSearchParams(window.location.search).get('expired') === '1');
+  }, []);
 
   const submit = async (values: LoginValues): Promise<void> => {
     try {
@@ -35,7 +41,7 @@ export default function LoginPage() {
       <section className="login-showcase" aria-label="Giới thiệu hệ thống">
         <div className="login-brand">
           <span className="login-brand__mark" aria-hidden>◎</span>
-          <span>Kính mắt <b>Admin</b></span>
+          <span>Kính mắt <b>Hướng Anh</b></span>
         </div>
         <div className="login-showcase__content">
           <span className="login-showcase__eyebrow">VẬN HÀNH THÔNG MINH</span>
@@ -51,13 +57,14 @@ export default function LoginPage() {
         <div className="login-form-panel__inner">
           <div className="login-brand login-brand--mobile">
             <span className="login-brand__mark" aria-hidden>◎</span>
-            <span>Kính mắt <b>Admin</b></span>
+            <span>Kính mắt <b>Hướng Anh</b></span>
           </div>
           <div className="login-form-heading">
             <span>CHÀO MỪNG TRỞ LẠI</span>
             <Typography.Title level={2}>Đăng nhập</Typography.Title>
             <Typography.Paragraph>Nhập thông tin tài khoản để tiếp tục quản lý cửa hàng.</Typography.Paragraph>
           </div>
+          {sessionExpired && <Alert type="warning" showIcon message="Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại." style={{ marginBottom: 16 }} />}
           <Form<LoginValues> layout="vertical" onFinish={submit} requiredMark={false} className="login-form">
             <Form.Item
               label="Email"

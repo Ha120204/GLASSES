@@ -1,8 +1,10 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { EyeExamAuditAction, Prisma, type EyeExam } from '@prisma/client';
 import { CreateEyeExamDto } from './dto/create-eye-exam.dto';
 import { EyeExamQueryDto } from './dto/eye-exam-query.dto';
 import { UpdateEyeExamDto } from './dto/update-eye-exam.dto';
+import { eyeExamOrderBy } from './eye-exam-sort';
 import { normalizePhone } from '../customers/phone.util';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -15,29 +17,47 @@ export class EyeExamsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(dto: CreateEyeExamDto, createdById: string) {
-    await this.ensureCustomer(dto.customerId);
-    this.validateExamDate(dto.examDate);
-    const exam = await this.prisma.$transaction(async (transaction) => {
-      const created = await transaction.eyeExam.create({ data: this.toData(dto), include: eyeExamInclude });
-      await transaction.eyeExamAuditLog.create({ data: { eyeExamId: created.id, action: EyeExamAuditAction.CREATED, createdById } });
-      return created;
-    });
-    return this.serialize(exam);
+    return this.createExam(dto, createdById, false);
   }
 
   async createAndLock(dto: CreateEyeExamDto, createdById: string) {
+    return this.createExam(dto, createdById, true);
+  }
+
+  private async createExam(dto: CreateEyeExamDto, createdById: string, locked: boolean) {
+    const data = this.toData(dto);
+    const requestHash = createHash('sha256').update(JSON.stringify({ locked, ...data })).digest('hex');
+    const previous = await this.findIdempotentExam(dto.idempotencyKey, requestHash);
+    if (previous) return this.serialize(previous);
     await this.ensureCustomer(dto.customerId);
     this.validateExamDate(dto.examDate);
-    this.validateFinalPrescription(dto as unknown as Record<string, unknown>);
-    const exam = await this.prisma.$transaction(async (transaction) => {
-      const created = await transaction.eyeExam.create({ data: { ...this.toData(dto), lockedAt: new Date(), lockedById: createdById }, include: eyeExamInclude });
-      await transaction.eyeExamAuditLog.createMany({ data: [
-        { eyeExamId: created.id, action: EyeExamAuditAction.CREATED, createdById },
-        { eyeExamId: created.id, action: EyeExamAuditAction.LOCKED, createdById },
-      ] });
-      return created;
-    });
-    return this.serialize(exam);
+    if (locked) this.validateFinalPrescription(dto as unknown as Record<string, unknown>);
+    try {
+      const exam = await this.prisma.$transaction(async (transaction) => {
+        const created = await transaction.eyeExam.create({
+          data: { ...data, idempotencyKey: dto.idempotencyKey, requestHash, ...(locked ? { lockedAt: new Date(), lockedById: createdById } : {}) },
+          include: eyeExamInclude,
+        });
+        await transaction.eyeExamAuditLog.createMany({ data: [
+          { eyeExamId: created.id, action: EyeExamAuditAction.CREATED, createdById },
+          ...(locked ? [{ eyeExamId: created.id, action: EyeExamAuditAction.LOCKED, createdById }] : []),
+        ] });
+        return created;
+      });
+      return this.serialize(exam);
+    } catch (error: unknown) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        const duplicate = await this.findIdempotentExam(dto.idempotencyKey, requestHash);
+        if (duplicate) return this.serialize(duplicate);
+      }
+      throw error;
+    }
+  }
+
+  private async findIdempotentExam(key: string, hash: string): Promise<EyeExamWithCustomer | null> {
+    const exam = await this.prisma.eyeExam.findUnique({ where: { idempotencyKey: key }, include: eyeExamInclude });
+    if (exam && exam.requestHash !== hash) throw new ConflictException('Mã yêu cầu đã được dùng cho nội dung khác.');
+    return exam;
   }
 
   async findAll(query: EyeExamQueryDto) {
@@ -48,10 +68,11 @@ export class EyeExamsService {
       ...(query.customerId ? { customerId: query.customerId } : {}),
       ...(query.dateFrom || query.dateTo ? { examDate: { ...(query.dateFrom ? { gte: new Date(query.dateFrom) } : {}), ...(query.dateTo ? { lte: new Date(query.dateTo) } : {}) } } : {}),
       ...(query.status === 'LOCKED' ? { lockedAt: { not: null } } : query.status === 'DRAFT' ? { lockedAt: null } : {}),
-      customer: { deletedAt: null, ...(q ? { OR: [{ name: { contains: q, mode: 'insensitive' } }, { phone: { contains: normalizePhone(q) } }] } : {}) },
+      customer: { deletedAt: null },
+      ...(q ? { OR: [{ code: { contains: q, mode: 'insensitive' } }, { customer: { OR: [{ name: { contains: q, mode: 'insensitive' } }, { phone: { contains: normalizePhone(q) } }] } }] } : {}),
     };
     const [items, total] = await this.prisma.$transaction([
-      this.prisma.eyeExam.findMany({ where, skip: (query.page - 1) * query.pageSize, take: query.pageSize, orderBy: { examDate: 'desc' }, include: eyeExamInclude }),
+      this.prisma.eyeExam.findMany({ where, skip: (query.page - 1) * query.pageSize, take: query.pageSize, orderBy: eyeExamOrderBy(query.sortBy, query.sortDirection), include: eyeExamInclude }),
       this.prisma.eyeExam.count({ where }),
     ]);
     return { items: items.map((item) => this.serialize(item)), total, page: query.page, pageSize: query.pageSize };
@@ -65,13 +86,14 @@ export class EyeExamsService {
       ...(query.customerId ? { customerId: query.customerId } : {}),
       ...(query.dateFrom || query.dateTo ? { examDate: { ...(query.dateFrom ? { gte: new Date(query.dateFrom) } : {}), ...(query.dateTo ? { lte: new Date(query.dateTo) } : {}) } } : {}),
       ...(query.status === 'LOCKED' ? { lockedAt: { not: null } } : query.status === 'DRAFT' ? { lockedAt: null } : {}),
-      customer: { deletedAt: null, ...(q ? { OR: [{ name: { contains: q, mode: 'insensitive' } }, { phone: { contains: normalizePhone(q) } }] } : {}) },
+      customer: { deletedAt: null },
+      ...(q ? { OR: [{ code: { contains: q, mode: 'insensitive' } }, { customer: { OR: [{ name: { contains: q, mode: 'insensitive' } }, { phone: { contains: normalizePhone(q) } }] } }] } : {}),
     };
     const [items, total] = await this.prisma.$transaction([
-      this.prisma.eyeExam.findMany({ where, skip: (query.page - 1) * query.pageSize, take: query.pageSize, orderBy: { archivedAt: 'desc' }, include: eyeExamInclude }),
+      this.prisma.eyeExam.findMany({ where, skip: (query.page - 1) * query.pageSize, take: query.pageSize, orderBy: { archivedAt: 'desc' }, include: { ...eyeExamInclude, _count: { select: { orders: true } } } }),
       this.prisma.eyeExam.count({ where }),
     ]);
-    return { items: items.map((item) => this.serialize(item)), total, page: query.page, pageSize: query.pageSize };
+    return { items: items.map((item) => ({ ...this.serialize(item), ordersCount: item._count.orders })), total, page: query.page, pageSize: query.pageSize };
   }
 
   async findOne(id: string) {
@@ -183,6 +205,16 @@ export class EyeExamsService {
     });
   }
 
+  async permanentlyDelete(id: string): Promise<void> {
+    const existing = await this.prisma.eyeExam.findFirst({
+      where: { id, archivedAt: { not: null } },
+      select: { id: true, orders: { select: { id: true }, take: 1 } },
+    });
+    if (!existing) throw new NotFoundException('Không tìm thấy phiếu đo đã lưu trữ.');
+    if (existing.orders.length) throw new ConflictException('Phiếu đo đã được dùng trong đơn hàng nên không thể xóa vĩnh viễn. Chỉ có thể giữ ở mục lưu trữ.');
+    await this.prisma.eyeExam.delete({ where: { id } });
+  }
+
   private async ensureCustomer(id: string): Promise<void> {
     const customer = await this.prisma.customer.findFirst({ where: { id, deletedAt: null } });
     if (!customer) throw new NotFoundException('Khách hàng không tồn tại hoặc đã bị xóa.');
@@ -269,5 +301,5 @@ export class EyeExamsService {
   }
 
   private toData(dto: Partial<CreateEyeExamDto>): Prisma.EyeExamUncheckedCreateInput { const keys = ['customerId', 'examDate', 'examiner', 'rSph', 'rCyl', 'rAxis', 'rAdd', 'rPd', 'pdTotal', 'rPrism', 'rBase', 'rSegHeight', 'lSph', 'lCyl', 'lAxis', 'lAdd', 'lPd', 'lPrism', 'lBase', 'lSegHeight', 'wearingPurpose', 'lensDesign', 'noPrescription', 'noPrescriptionReason', 'note'] as const; return keys.reduce<Prisma.EyeExamUncheckedCreateInput>((data, key) => { const value = dto[key]; if (value !== undefined) { (data as Record<string, unknown>)[key] = key === 'examDate' ? new Date(value as string) : (typeof value === 'string' ? value.trim() || null : value); } return data; }, {} as Prisma.EyeExamUncheckedCreateInput); }
-  private serialize(exam: EyeExamWithCustomer | EyeExam) { const output = { ...exam } as Record<string, unknown>; for (const key of ['rSph', 'rCyl', 'rAdd', 'rPd', 'pdTotal', 'rPrism', 'rSegHeight', 'lSph', 'lCyl', 'lAdd', 'lPd', 'lPrism', 'lSegHeight']) { const value = output[key]; output[key] = value instanceof Prisma.Decimal ? value.toNumber() : value; } return output; }
+  private serialize(exam: EyeExamWithCustomer | EyeExam) { const output = { ...exam } as Record<string, unknown>; delete output.idempotencyKey; delete output.requestHash; for (const key of ['rSph', 'rCyl', 'rAdd', 'rPd', 'pdTotal', 'rPrism', 'rSegHeight', 'lSph', 'lCyl', 'lAdd', 'lPd', 'lPrism', 'lSegHeight']) { const value = output[key]; output[key] = value instanceof Prisma.Decimal ? value.toNumber() : value; } return output; }
 }

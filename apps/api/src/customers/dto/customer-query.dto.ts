@@ -1,10 +1,22 @@
 import { Transform, Type } from 'class-transformer';
-import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 
 export class CustomerQueryDto {
   @IsOptional()
   @IsString()
   q?: string;
+
+  @IsOptional()
+  @IsIn(['MALE', 'FEMALE', 'OTHER'])
+  gender?: 'MALE' | 'FEMALE' | 'OTHER';
+
+  @IsOptional()
+  @IsIn(['createdAt', 'name', 'phone'])
+  sortBy: 'createdAt' | 'name' | 'phone' = 'createdAt';
+
+  @IsOptional()
+  @IsIn(['asc', 'desc'])
+  sortDirection: 'asc' | 'desc' = 'desc';
 
   @IsOptional()
   @Type(() => Number)

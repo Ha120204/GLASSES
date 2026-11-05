@@ -5,6 +5,9 @@ export enum ProductType {
   ACCESSORY = 'ACCESSORY',
 }
 
+export { vietQrBanks } from './vietqr-banks';
+export type { VietQrBank } from './vietqr-banks';
+
 export enum OrderStatus {
   NEW = 'NEW',
   CANCELLED = 'CANCELLED',

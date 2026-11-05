@@ -35,7 +35,7 @@ const formatDate = (value: string): string => new Intl.DateTimeFormat('vi-VN', {
 export function EyeExamComparison({ open, exams, firstId, secondId, onChange, onClose }: { open: boolean; exams: EyeExam[]; firstId?: string; secondId?: string; onChange: (first?: string, second?: string) => void; onClose: () => void }) {
   const first = exams.find((item) => item.id === firstId);
   const second = exams.find((item) => item.id === secondId);
-  const options = exams.map((item) => ({ value: item.id, label: formatDate(item.examDate) }));
+  const options = exams.map((item) => ({ value: item.id, label: `${item.code} · ${formatDate(item.examDate)}` }));
   const value = (exam: EyeExam, key: RxKey) => exam[key] as number | string | null;
   const display = (exam: EyeExam, key: RxKey, row: ComparisonRow): string => {
     const current = value(exam, key);
@@ -61,11 +61,11 @@ export function EyeExamComparison({ open, exams, firstId, secondId, onChange, on
   const valueCell = (exam: EyeExam | undefined, key: RxKey, row: ComparisonRow, changed: boolean) => exam ? <strong className={changed ? 'eye-exam-comparison__changed' : undefined}>{display(exam, key, row)}</strong> : '—';
   const columns: TableColumnsType<ComparisonRow> = [
     { title: 'Thông số', dataIndex: 'label', width: 125, render: (label: string, row) => <span>{label}{row.unit ? <small className="eye-exam-comparison__unit">{row.unit}</small> : null}</span> },
-    { title: `OD · ${first ? formatDate(first.examDate) : 'Phiếu 1'}`, render: (_: unknown, row) => valueCell(first, row.right, row, false) },
-    { title: `OD · ${second ? formatDate(second.examDate) : 'Phiếu 2'}`, render: (_: unknown, row) => valueCell(second, row.right, row, Boolean(first && second && hasChanged(value(first, row.right), value(second, row.right), row))) },
+    { title: `OD · ${first?.code ?? 'Phiếu 1'}`, render: (_: unknown, row) => valueCell(first, row.right, row, false) },
+    { title: `OD · ${second?.code ?? 'Phiếu 2'}`, render: (_: unknown, row) => valueCell(second, row.right, row, Boolean(first && second && hasChanged(value(first, row.right), value(second, row.right), row))) },
     { title: 'Chênh OD', render: (_: unknown, row) => first && second ? difference(value(first, row.right), value(second, row.right), row) : '—' },
-    { title: `OS · ${first ? formatDate(first.examDate) : 'Phiếu 1'}`, render: (_: unknown, row) => valueCell(first, row.left, row, false) },
-    { title: `OS · ${second ? formatDate(second.examDate) : 'Phiếu 2'}`, render: (_: unknown, row) => valueCell(second, row.left, row, Boolean(first && second && hasChanged(value(first, row.left), value(second, row.left), row))) },
+    { title: `OS · ${first?.code ?? 'Phiếu 1'}`, render: (_: unknown, row) => valueCell(first, row.left, row, false) },
+    { title: `OS · ${second?.code ?? 'Phiếu 2'}`, render: (_: unknown, row) => valueCell(second, row.left, row, Boolean(first && second && hasChanged(value(first, row.left), value(second, row.left), row))) },
     { title: 'Chênh OS', render: (_: unknown, row) => first && second ? difference(value(first, row.left), value(second, row.left), row) : '—' },
   ];
 

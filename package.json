@@ -6,16 +6,22 @@
     "node": ">=22 <24"
   },
   "scripts": {
-    "dev": "corepack pnpm --parallel --filter @glasses/api --filter @glasses/web dev",
+    "dev": "corepack pnpm --filter @glasses/shared build && corepack pnpm --parallel --filter @glasses/api --filter @glasses/web dev",
     "build": "corepack pnpm --filter @glasses/shared build && corepack pnpm --filter @glasses/api build && corepack pnpm --filter @glasses/web build",
     "lint": "corepack pnpm --parallel --filter @glasses/api --filter @glasses/web lint",
     "format": "prettier --write ."
   },
   "devDependencies": {
+    "@next/eslint-plugin-next": "15.5.27",
     "@types/node": "^22.10.2",
     "eslint": "^9.17.0",
     "prettier": "^3.4.2",
-    "typescript-eslint": "^8.21.0",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.21.0"
+  },
+  "pnpm": {
+    "patchedDependencies": {
+      "@ant-design/cssinjs@1.24.0": "patches/@ant-design__cssinjs@1.24.0.patch"
+    }
   }
 }

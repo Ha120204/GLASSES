@@ -32,8 +32,9 @@ export function EyeExamHistoryModal({ exam, open, onClose }: Props) {
   const { data, isFetching, isError } = useEyeExamHistoryQuery(exam?.id ?? '', { skip: !open || !exam });
 
   return <Modal
-    title={<>Lịch sử phiếu đo{exam ? ` · ${new Intl.DateTimeFormat('vi-VN').format(new Date(exam.examDate))}` : ''}</>}
+    title={<>Lịch sử chỉnh sửa{exam ? ` · ${new Intl.DateTimeFormat('vi-VN').format(new Date(exam.examDate))}` : ''}</>}
     open={open}
+    zIndex={1200}
     onCancel={onClose}
     footer={null}
     width={680}

@@ -6,6 +6,8 @@ import { EyeExamQueryDto } from './dto/eye-exam-query.dto';
 import { UpdateEyeExamDto } from './dto/update-eye-exam.dto';
 import { EyeExamsService } from './eye-exams.service';
 import { EyeExamExcelService, type EyeExamImportRow } from './eye-exam-excel.service';
+import { Roles } from '../auth/roles.decorator';
+import { UserRole } from '@prisma/client';
 
 @Controller('eye-exams')
 export class EyeExamsController {
@@ -36,6 +38,10 @@ export class EyeExamsController {
   @Patch(':id/finalize') updateAndLock(@Param('id') id: string, @Body() dto: UpdateEyeExamDto, @Req() request: AuthenticatedRequest) { return this.eyeExamsService.updateAndLock(id, dto, request.user!.sub); }
   @Patch(':id/unlock') unlock(@Param('id') id: string, @Req() request: AuthenticatedRequest) { return this.eyeExamsService.unlock(id, request.user!.sub); }
   @Patch(':id/restore') restore(@Param('id') id: string, @Req() request: AuthenticatedRequest) { return this.eyeExamsService.restore(id, request.user!.sub); }
+  @Delete(':id/permanent')
+  @Roles(UserRole.ADMIN)
+  @HttpCode(204)
+  async permanentlyDelete(@Param('id') id: string): Promise<void> { await this.eyeExamsService.permanentlyDelete(id); }
   @Post('bulk-archive') bulkArchive(@Body('ids') ids: unknown, @Req() request: AuthenticatedRequest) { return this.eyeExamsService.archiveMany(this.requiredIds(ids), request.user!.sub); }
   @Patch(':id') update(@Param('id') id: string, @Body() dto: UpdateEyeExamDto, @Req() request: AuthenticatedRequest) { return this.eyeExamsService.update(id, dto, request.user!.sub); }
   @Delete(':id') @HttpCode(204) async archive(@Param('id') id: string, @Req() request: AuthenticatedRequest): Promise<void> { await this.eyeExamsService.archive(id, request.user!.sub); }

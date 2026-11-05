@@ -1,4 +1,4 @@
-# Kính mắt Admin
+# Kính mắt Hướng Anh
 
 Hệ thống quản trị cho một cửa hàng kính mắt, gồm Next.js + Ant Design ở frontend và NestJS + Prisma/PostgreSQL ở backend.
 
@@ -55,5 +55,7 @@ Mở `http://localhost:3000`, rồi đăng nhập bằng `SEED_EMAIL` / `SEED_PA
 
 - **API (Railway/Render):** dùng [apps/api/Dockerfile](apps/api/Dockerfile). Khai báo `DATABASE_URL`, `JWT_SECRET`, `JWT_EXPIRES_IN`, `CORS_ORIGIN`; entrypoint tự chạy `prisma migrate deploy` trước khi khởi động API.
 - **Web (Vercel):** đặt Root Directory là `apps/web` và khai báo `API_URL` trỏ tới base URL của API. Rewrite giữ cookie cùng origin cho trình duyệt.
+
+Ảnh sản phẩm được kiểm tra và chuyển sang WebP khi tải lên; ảnh chính và ảnh thu nhỏ được lưu trong PostgreSQL. Bản sao lưu PostgreSQL vì vậy bao gồm cả ảnh sản phẩm.
 
 Không commit các tệp `.env`; chúng đã được loại trừ bởi `.gitignore`.

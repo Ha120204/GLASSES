@@ -1,9 +1,11 @@
+import { createHash } from 'node:crypto';
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, type Product } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { ProductQueryDto } from './dto/product-query.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
+import { prepareProductImage } from './product-image';
 
 const SKU_PREFIX_BY_TYPE = {
   FRAME: 'GONG',
@@ -31,7 +33,7 @@ export class ProductsService {
     const [items, total] = await this.prisma.$transaction([
       this.prisma.product.findMany({
         where,
-        orderBy: { name: 'asc' },
+        orderBy: [{ [query.sortBy ?? 'name']: query.sortDirection ?? 'asc' }, { id: 'asc' }],
         skip: (query.page - 1) * query.pageSize,
         take: query.pageSize,
       }),
@@ -42,6 +44,38 @@ export class ProductsService {
 
   async findOne(id: string): Promise<Product> {
     return this.getActiveProduct(id);
+  }
+
+  async getImage(id: string, variant: 'full' | 'thumbnail' = 'full'): Promise<{ content: Uint8Array; mimeType: string }> {
+    const image = await this.prisma.productImage.findFirst({
+      where: { productId: id },
+      select: { content: true, thumbnail: true, mimeType: true },
+    });
+    if (!image) throw new NotFoundException('Không tìm thấy ảnh sản phẩm.');
+    return { content: variant === 'thumbnail' ? (image.thumbnail ?? image.content) : image.content, mimeType: image.mimeType };
+  }
+
+  async saveImage(id: string, file?: Express.Multer.File): Promise<Product> {
+    await this.getActiveProduct(id);
+    const { content, thumbnail, mimeType } = await prepareProductImage(file);
+    const [, product] = await this.prisma.$transaction([
+      this.prisma.productImage.upsert({
+        where: { productId: id },
+        create: { productId: id, content, thumbnail, mimeType },
+        update: { content, thumbnail, mimeType },
+      }),
+      this.prisma.product.update({ where: { id }, data: { imageUpdatedAt: new Date() } }),
+    ]);
+    return product;
+  }
+
+  async removeImage(id: string): Promise<Product> {
+    await this.getActiveProduct(id);
+    const [, product] = await this.prisma.$transaction([
+      this.prisma.productImage.deleteMany({ where: { productId: id } }),
+      this.prisma.product.update({ where: { id }, data: { imageUpdatedAt: null } }),
+    ]);
+    return product;
   }
 
   async findDeleted(query: ProductQueryDto): Promise<{ items: Product[]; total: number; page: number; pageSize: number }> {
@@ -67,10 +101,17 @@ export class ProductsService {
   }
 
   async create(dto: CreateProductDto): Promise<Product> {
-    if (dto.autoSku) return this.createWithAutoSku(dto);
+    const requestHash = dto.idempotencyKey ? this.hashCreateRequest(dto) : undefined;
+    if (dto.idempotencyKey) {
+      const previous = await this.findIdempotentProduct(dto.idempotencyKey, requestHash!);
+      if (previous) return previous;
+    }
+    if (dto.autoSku) return this.createWithAutoSku(dto, requestHash);
     try {
-      return await this.prisma.product.create({ data: this.createData(dto) });
+      return await this.prisma.product.create({ data: this.createData(dto, undefined, requestHash) });
     } catch (error: unknown) {
+      const duplicate = await this.findDuplicateRequestAfterConflict(error, dto, requestHash);
+      if (duplicate) return duplicate;
       this.throwUniqueSku(error);
       throw error;
     }
@@ -130,12 +171,14 @@ export class ProductsService {
     await this.prisma.product.delete({ where: { id: product.id } });
   }
 
-  private async createWithAutoSku(dto: CreateProductDto): Promise<Product> {
+  private async createWithAutoSku(dto: CreateProductDto, requestHash?: string): Promise<Product> {
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const { sku } = await this.getNextSku(dto.type);
       try {
-        return await this.prisma.product.create({ data: this.createData(dto, sku) });
+        return await this.prisma.product.create({ data: this.createData(dto, sku, requestHash) });
       } catch (error: unknown) {
+        const duplicate = await this.findDuplicateRequestAfterConflict(error, dto, requestHash);
+        if (duplicate) return duplicate;
         if (this.isUniqueSkuError(error)) continue;
         this.throwUniqueSku(error);
         throw error;
@@ -144,9 +187,11 @@ export class ProductsService {
     throw new ConflictException('Không thể cấp mã sản phẩm tự động. Vui lòng thử lại.');
   }
 
-  private createData(dto: CreateProductDto, generatedSku?: string): Prisma.ProductUncheckedCreateInput {
+  private createData(dto: CreateProductDto, generatedSku?: string, requestHash?: string): Prisma.ProductUncheckedCreateInput {
     return {
       sku: (generatedSku ?? dto.sku).trim().toUpperCase(),
+      idempotencyKey: dto.idempotencyKey ?? null,
+      requestHash: requestHash ?? null,
       barcode: this.normalizeBarcode(dto.barcode),
       name: dto.name.trim(),
       type: dto.type,
@@ -156,6 +201,33 @@ export class ProductsService {
       supplier: dto.supplier?.trim() || null,
       active: dto.active ?? true,
     };
+  }
+
+  private hashCreateRequest(dto: CreateProductDto): string {
+    const payload = {
+      sku: dto.autoSku ? null : dto.sku.trim().toUpperCase(),
+      autoSku: dto.autoSku === true,
+      barcode: this.normalizeBarcode(dto.barcode),
+      name: dto.name.trim(),
+      type: dto.type,
+      brand: dto.brand?.trim() || null,
+      costPrice: dto.costPrice,
+      salePrice: dto.salePrice,
+      supplier: dto.supplier?.trim() || null,
+      active: dto.active ?? true,
+    };
+    return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+  }
+
+  private async findIdempotentProduct(key: string, hash: string): Promise<Product | null> {
+    const product = await this.prisma.product.findUnique({ where: { idempotencyKey: key } });
+    if (product && product.requestHash !== hash) throw new ConflictException('Mã yêu cầu đã được dùng cho nội dung khác.');
+    return product;
+  }
+
+  private async findDuplicateRequestAfterConflict(error: unknown, dto: CreateProductDto, requestHash?: string): Promise<Product | null> {
+    if (!dto.idempotencyKey || !requestHash || !(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') return null;
+    return this.findIdempotentProduct(dto.idempotencyKey, requestHash);
   }
 
   private updateData(dto: UpdateProductDto): Prisma.ProductUncheckedUpdateInput {

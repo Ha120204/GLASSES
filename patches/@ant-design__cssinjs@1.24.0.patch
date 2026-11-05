@@ -1,0 +1,54 @@
+diff --git a/es/hooks/useEffectCleanupRegister.js b/es/hooks/useEffectCleanupRegister.js
+index b2fad1dc771aa09a954b1537e6dd1cee88404388..d8bcef32e2d33d01df6bcfaa9776c1cc7857387a 100644
+--- a/es/hooks/useEffectCleanupRegister.js
++++ b/es/hooks/useEffectCleanupRegister.js
+@@ -1,18 +1,15 @@
+ import _objectSpread from "@babel/runtime/helpers/esm/objectSpread2";
+-import { warning } from "rc-util/es/warning";
+ import * as React from 'react';
+ var fullClone = _objectSpread({}, React);
+ var useInsertionEffect = fullClone.useInsertionEffect;
+ 
+-// DO NOT register functions in useEffect cleanup function, or functions that registered will never be called.
++// Run late cleanups after the cache update when insertion effects finish last.
+ var useCleanupRegister = function useCleanupRegister(deps) {
+   var effectCleanups = [];
+   var cleanupFlag = false;
+   function register(fn) {
+     if (cleanupFlag) {
+-      if (process.env.NODE_ENV !== 'production') {
+-        warning(false, '[Ant Design CSS-in-JS] You are registering a cleanup function after unmount, which will not have any effect.');
+-      }
++      queueMicrotask(fn);
+       return;
+     }
+     effectCleanups.push(fn);
+diff --git a/lib/hooks/useEffectCleanupRegister.js b/lib/hooks/useEffectCleanupRegister.js
+index 09f0c9fcd68ffcced471609160355cede81cf583..b150595943a8bd8cd0891ddf1f610ffc24f65b0e 100644
+--- a/lib/hooks/useEffectCleanupRegister.js
++++ b/lib/hooks/useEffectCleanupRegister.js
+@@ -7,22 +7,19 @@ Object.defineProperty(exports, "__esModule", {
+ });
+ exports.default = void 0;
+ var _objectSpread2 = _interopRequireDefault(require("@babel/runtime/helpers/objectSpread2"));
+-var _warning = require("rc-util/lib/warning");
+ var React = _interopRequireWildcard(require("react"));
+ function _getRequireWildcardCache(e) { if ("function" != typeof WeakMap) return null; var r = new WeakMap(), t = new WeakMap(); return (_getRequireWildcardCache = function _getRequireWildcardCache(e) { return e ? t : r; })(e); }
+ function _interopRequireWildcard(e, r) { if (!r && e && e.__esModule) return e; if (null === e || "object" != _typeof(e) && "function" != typeof e) return { default: e }; var t = _getRequireWildcardCache(r); if (t && t.has(e)) return t.get(e); var n = { __proto__: null }, a = Object.defineProperty && Object.getOwnPropertyDescriptor; for (var u in e) if ("default" !== u && Object.prototype.hasOwnProperty.call(e, u)) { var i = a ? Object.getOwnPropertyDescriptor(e, u) : null; i && (i.get || i.set) ? Object.defineProperty(n, u, i) : n[u] = e[u]; } return n.default = e, t && t.set(e, n), n; }
+ var fullClone = (0, _objectSpread2.default)({}, React);
+ var useInsertionEffect = fullClone.useInsertionEffect;
+ 
+-// DO NOT register functions in useEffect cleanup function, or functions that registered will never be called.
++// Run late cleanups after the cache update when insertion effects finish last.
+ var useCleanupRegister = function useCleanupRegister(deps) {
+   var effectCleanups = [];
+   var cleanupFlag = false;
+   function register(fn) {
+     if (cleanupFlag) {
+-      if (process.env.NODE_ENV !== 'production') {
+-        (0, _warning.warning)(false, '[Ant Design CSS-in-JS] You are registering a cleanup function after unmount, which will not have any effect.');
+-      }
++      queueMicrotask(fn);
+       return;
+     }
+     effectCleanups.push(fn);

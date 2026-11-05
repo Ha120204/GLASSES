@@ -7,7 +7,30 @@ const timeZone = 'Asia/Ho_Chi_Minh';
 const formatDay = (date: Date): string => new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
 const startOfVietnamDay = (day: string): Date => new Date(`${day}T00:00:00.000+07:00`);
 const endOfVietnamDay = (day: string): Date => new Date(`${day}T23:59:59.999+07:00`);
-const activeStatuses: OrderStatus[] = [OrderStatus.NEW, OrderStatus.LENS_ORDERED, OrderStatus.PROCESSING, OrderStatus.READY, OrderStatus.DELIVERED];
+const activeStatuses: OrderStatus[] = [OrderStatus.IN_PROGRESS, OrderStatus.AWAITING_PAYMENT, OrderStatus.DELIVERED];
+type ReportItem = { name: string; qty: number; unitPrice: number };
+
+function allocateOrderSales(items: ReportItem[], total: number): number[] {
+  const gross = items.map((item) => item.unitPrice * item.qty);
+  const subtotal = gross.reduce((sum, amount) => sum + amount, 0);
+  if (subtotal === 0) return items.map(() => 0);
+
+  const shares = gross.map((amount, index) => {
+    const scaled = BigInt(amount) * BigInt(total);
+    return { index, remainder: scaled % BigInt(subtotal), sales: Number(scaled / BigInt(subtotal)) };
+  });
+  let unallocated = total - shares.reduce((sum, share) => sum + share.sales, 0);
+  const byRemainder = [...shares].sort((left, right) => {
+    if (left.remainder !== right.remainder) return left.remainder > right.remainder ? -1 : 1;
+    return items[left.index].name < items[right.index].name ? -1 : items[left.index].name > items[right.index].name ? 1 : 0;
+  });
+  for (const share of byRemainder) {
+    if (unallocated === 0) break;
+    share.sales += 1;
+    unallocated -= 1;
+  }
+  return shares.map((share) => share.sales);
+}
 
 @Injectable()
 export class ReportsService {
@@ -20,6 +43,7 @@ export class ReportsService {
     const dateTo = query.dateTo ?? today;
     if (dateFrom > dateTo) throw new BadRequestException('Ngày bắt đầu không được sau ngày kết thúc.');
     const createdAt = { gte: startOfVietnamDay(dateFrom), lte: endOfVietnamDay(dateTo) };
+    // Archiving only organizes orders; historical sales and cashflow still include them.
     const [orders, payments] = await this.prisma.$transaction([
       this.prisma.order.findMany({
         where: { createdAt },
@@ -40,15 +64,18 @@ export class ReportsService {
       daily.set(day, { sales: current.sales + order.total, orders: current.orders + 1 });
     }
     const productMap = new Map<string, { qty: number; sales: number }>();
-    for (const order of activeOrders) for (const item of order.items) {
-      const current = productMap.get(item.name) ?? { qty: 0, sales: 0 };
-      productMap.set(item.name, { qty: current.qty + item.qty, sales: current.sales + item.unitPrice * item.qty });
+    for (const order of activeOrders) {
+      const allocatedSales = allocateOrderSales(order.items, order.total);
+      for (const [index, item] of order.items.entries()) {
+        const current = productMap.get(item.name) ?? { qty: 0, sales: 0 };
+        productMap.set(item.name, { qty: current.qty + item.qty, sales: current.sales + allocatedSales[index] });
+      }
     }
     const paymentByMethod = Object.fromEntries(Object.values(PaymentMethod).map((method) => [method, 0])) as Record<PaymentMethod, number>;
     for (const payment of payments) paymentByMethod[payment.method] += payment.type === PaymentType.PAYMENT ? payment.amount : -payment.amount;
     return {
       period: { dateFrom, dateTo },
-      summary: { orderSales, collected: deposits + paymentCashflow, outstanding, orderCount: activeOrders.length, actionNeeded: statusCounts.NEW + statusCounts.LENS_ORDERED + statusCounts.PROCESSING },
+      summary: { orderSales, collected: deposits + paymentCashflow, outstanding, orderCount: activeOrders.length, inProgress: statusCounts.IN_PROGRESS },
       dailySales: [...daily.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, value]) => ({ date, ...value })),
       statusCounts,
       paymentByMethod,
@@ -60,18 +87,19 @@ export class ReportsService {
     const today = formatDay(new Date());
     const todayRange = { gte: startOfVietnamDay(today), lte: endOfVietnamDay(today) };
     const sevenDayStart = formatDay(new Date(startOfVietnamDay(today).getTime() - 6 * 24 * 60 * 60 * 1000));
-    const actionStatuses: OrderStatus[] = [OrderStatus.NEW, OrderStatus.LENS_ORDERED, OrderStatus.PROCESSING];
-    const dueStatuses: OrderStatus[] = [...actionStatuses, OrderStatus.READY];
-    const [activeOrders, todayOrders, todayPayments, recentOrders, weekOrders, newOrders, actionNeeded, dueToday, overdue] = await this.prisma.$transaction([
-      this.prisma.order.findMany({ where: { status: { in: activeStatuses } }, select: { total: true, deposit: true, payments: { select: { amount: true, type: true } } } }),
+    const inProgressStatuses: OrderStatus[] = [OrderStatus.IN_PROGRESS];
+    const dueStatuses: OrderStatus[] = [OrderStatus.IN_PROGRESS];
+    // Operational widgets hide archived orders. Cashflow and sales history remain unchanged.
+    const [activeOrders, todayOrders, todayPayments, recentOrders, weekOrders, completedToday, inProgress, dueToday, overdue] = await this.prisma.$transaction([
+      this.prisma.order.findMany({ where: { archivedAt: null, status: { in: activeStatuses } }, select: { total: true, deposit: true, payments: { select: { amount: true, type: true } } } }),
       this.prisma.order.findMany({ where: { createdAt: todayRange }, select: { deposit: true } }),
       this.prisma.payment.findMany({ where: { paidAt: todayRange }, select: { amount: true, type: true } }),
-      this.prisma.order.findMany({ where: { status: { in: activeStatuses } }, orderBy: { createdAt: 'desc' }, take: 5, select: { id: true, code: true, status: true, total: true, dueDate: true, createdAt: true, customer: { select: { name: true, phone: true } } } }),
+      this.prisma.order.findMany({ where: { archivedAt: null, status: { in: activeStatuses } }, orderBy: { createdAt: 'desc' }, take: 5, select: { id: true, code: true, status: true, total: true, dueDate: true, createdAt: true, customer: { select: { name: true, phone: true } } } }),
       this.prisma.order.findMany({ where: { status: { in: activeStatuses }, createdAt: { gte: startOfVietnamDay(sevenDayStart), lte: endOfVietnamDay(today) } }, select: { createdAt: true, total: true } }),
-      this.prisma.order.count({ where: { status: { in: activeStatuses }, createdAt: todayRange } }),
-      this.prisma.order.count({ where: { status: { in: actionStatuses } } }),
-      this.prisma.order.count({ where: { status: { in: dueStatuses }, dueDate: todayRange } }),
-      this.prisma.order.count({ where: { status: { in: dueStatuses }, dueDate: { lt: startOfVietnamDay(today) } } }),
+      this.prisma.orderStatusHistory.count({ where: { toStatus: OrderStatus.DELIVERED, createdAt: todayRange } }),
+      this.prisma.order.count({ where: { archivedAt: null, status: { in: inProgressStatuses } } }),
+      this.prisma.order.count({ where: { archivedAt: null, status: { in: dueStatuses }, dueDate: todayRange } }),
+      this.prisma.order.count({ where: { archivedAt: null, status: { in: dueStatuses }, dueDate: { lt: startOfVietnamDay(today) } } }),
     ]);
     const outstanding = activeOrders.reduce((sum, order) => sum + Math.max(0, order.total - order.deposit - order.payments.reduce((paid, payment) => paid + (payment.type === PaymentType.PAYMENT ? payment.amount : -payment.amount), 0)), 0);
     const collectedToday = todayOrders.reduce((sum, order) => sum + order.deposit, 0) + todayPayments.reduce((sum, payment) => sum + (payment.type === PaymentType.PAYMENT ? payment.amount : -payment.amount), 0);
@@ -79,8 +107,8 @@ export class ReportsService {
     for (const order of weekOrders) daily.set(formatDay(order.createdAt), (daily.get(formatDay(order.createdAt)) ?? 0) + order.total);
     return {
       today,
-      summary: { collectedToday, newOrders, outstanding, actionNeeded },
-      tasks: { overdue, dueToday, actionNeeded },
+      summary: { collectedToday, completedToday, outstanding, inProgress },
+      tasks: { overdue, dueToday, inProgress },
       recentOrders,
       dailySales: [...daily.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, sales]) => ({ date, sales })),
     };

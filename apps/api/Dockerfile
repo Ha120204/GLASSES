@@ -22,4 +22,4 @@ COPY --from=build /app/packages/shared ./packages/shared
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/apps/api/node_modules ./apps/api/node_modules
 EXPOSE 4000
-CMD ["sh", "-c", "cd apps/api && npx prisma migrate deploy && node dist/main"]
+CMD ["sh", "-c", "cd apps/api && npx prisma migrate deploy && node dist/src/main.js"]

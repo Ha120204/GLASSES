@@ -1,7 +1,7 @@
 'use client';
 
 import { ArrowLeftOutlined, PrinterOutlined } from '@ant-design/icons';
-import { Button, Card, Descriptions, Spin, Tag } from 'antd';
+import { Button, Card, Descriptions, Empty, Spin, Tag } from 'antd';
 import { useParams, useRouter } from 'next/navigation';
 import { orderStatusColors, orderStatusLabels, type Order, useOrderQuery } from '@/store/api';
 
@@ -12,8 +12,9 @@ const paidAmount = (order: Order): number => order.deposit + order.payments.redu
 export default function PrintOrderPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const { data: order, isLoading } = useOrderQuery(id);
-  if (isLoading || !order) return <Spin size="large" />;
+  const { data: order, isLoading, isError, refetch } = useOrderQuery(id);
+  if (isLoading) return <Spin size="large" />;
+  if (isError || !order) return <Empty description="Không thể tải phiếu đơn hàng."><Button onClick={() => void refetch()}>Thử lại</Button></Empty>;
   const paid = paidAmount(order);
 
   return <div className="print-sheet order-print">
@@ -27,7 +28,7 @@ export default function PrintOrderPage() {
         { key: 'warranty', label: 'Bảo hành đến', children: formatDate(order.warrantyUntil) },
       ]} />
       <table className="rx-print order-print__table"><thead><tr><th>Sản phẩm</th><th>SL</th><th>Đơn giá</th><th>Thành tiền</th></tr></thead><tbody>{order.items.map((item) => <tr key={item.id}><td>{item.name}</td><td>{item.qty}</td><td>{formatMoney(item.unitPrice)}</td><td>{formatMoney(item.unitPrice * item.qty)}</td></tr>)}</tbody></table>
-      <div className="order-print__totals"><span>Tạm tính <b>{formatMoney(order.subtotal)}</b></span><span>Chiết khấu <b>−{formatMoney(order.discount)}</b></span><strong>Tổng đơn <b>{formatMoney(order.total)}</b></strong><span>Đã thanh toán <b>{formatMoney(paid)}</b></span><strong>Còn phải thu <b>{formatMoney(Math.max(0, order.total - paid))}</b></strong></div>
+      <div className="order-print__totals"><span>Tạm tính <b>{formatMoney(order.subtotal)}</b></span><span>Chiết khấu <b>−{formatMoney(order.discount)}</b></span><strong>Tổng đơn <b>{formatMoney(order.total)}</b></strong><span>Đã thanh toán <b>{formatMoney(paid)}</b></span><strong>{order.status === 'CANCELLED' ? 'Đơn đã hủy' : 'Còn phải thu'} <b>{formatMoney(order.status === 'CANCELLED' ? 0 : Math.max(0, order.total - paid))}</b></strong></div>
       {order.note ? <p className="order-print__note"><b>Ghi chú:</b> {order.note}</p> : null}
     </Card>
   </div>;

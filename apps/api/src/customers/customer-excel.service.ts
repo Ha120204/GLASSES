@@ -1,14 +1,18 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import * as ExcelJS from 'exceljs';
 import * as XLSX from 'xlsx';
+import { colorRequiredHeaderAsterisks } from '../common/excel-required-headers';
 import { PrismaService } from '../prisma/prisma.service';
-import { normalizePhone } from './phone.util';
+import { isCustomerName, normalizeCustomerName } from './customer-name.util';
+import { isVietnamPhone, normalizePhone } from './phone.util';
+import { isCustomerBirthday } from './customer-birthday.util';
 
 const MAX_IMPORT_ROWS = 1_000;
 const CUSTOMER_IMPORT_HEADERS = ['Họ tên*', 'Số điện thoại*', 'Ngày sinh', 'Giới tính', 'Địa chỉ', 'Ghi chú'];
-const CUSTOMER_EXPORT_HEADERS = ['Họ và tên', 'Số điện thoại', 'Ngày sinh', 'Giới tính', 'Địa chỉ', 'Ghi chú', 'Ngày tạo hồ sơ'];
+const CUSTOMER_EXPORT_HEADERS = ['Họ và tên*', 'Số điện thoại*', 'Ngày sinh', 'Giới tính', 'Địa chỉ', 'Ghi chú', 'Ngày tạo hồ sơ'];
 type ImportColumn = 'name' | 'phone' | 'birthday' | 'gender' | 'address' | 'note';
 type ColumnMap = Record<ImportColumn, number | undefined>;
+type RowValidationIssue = { field: ImportColumn; reason: string };
 
 export interface CustomerImportRow {
   row: number;
@@ -23,6 +27,10 @@ export interface CustomerImportRow {
 export interface CustomerImportIssue {
   row: number;
   reason: string;
+  name: string;
+  phone: string;
+  field: ImportColumn;
+  value: string;
 }
 
 export interface CustomerImportPreview {
@@ -46,6 +54,7 @@ export class CustomerExcelService {
     worksheet.addRow(CUSTOMER_IMPORT_HEADERS);
     for (let index = 0; index < 10; index += 1) worksheet.addRow(Array(CUSTOMER_IMPORT_HEADERS.length).fill(null));
     this.formatGrid(worksheet, CUSTOMER_IMPORT_HEADERS.length, 11);
+    colorRequiredHeaderAsterisks(worksheet, CUSTOMER_IMPORT_HEADERS);
     worksheet.getColumn(3).numFmt = 'dd/mm/yyyy';
 
     const guide = workbook.addWorksheet('Hướng dẫn');
@@ -89,6 +98,7 @@ export class CustomerExcelService {
     worksheet.addRow(CUSTOMER_EXPORT_HEADERS);
     rows.forEach((row) => worksheet.addRow(row));
     this.formatGrid(worksheet, CUSTOMER_EXPORT_HEADERS.length, rows.length + 1);
+    colorRequiredHeaderAsterisks(worksheet, CUSTOMER_EXPORT_HEADERS);
     worksheet.getColumn(3).numFmt = 'dd/mm/yyyy';
     worksheet.getColumn(7).numFmt = 'dd/mm/yyyy';
     return Buffer.from(await workbook.xlsx.writeBuffer());
@@ -142,7 +152,9 @@ export class CustomerExcelService {
       throw new BadRequestException('Thiếu cột “Họ tên” hoặc “Số điện thoại”. Hãy giữ nguyên hàng tiêu đề của file xuất hoặc dùng file mẫu để nhập dữ liệu.');
     }
 
-    const dataRows = values.slice(1).filter((row) => row.some((value) => this.text(value) !== ''));
+    const dataRows = values.slice(1)
+      .map((row, index) => ({ row, spreadsheetRow: index + 2 }))
+      .filter(({ row }) => row.some((value) => this.text(value) !== ''));
     if (dataRows.length > MAX_IMPORT_ROWS) {
       throw new BadRequestException(`Mỗi lần chỉ có thể nhập tối đa ${MAX_IMPORT_ROWS.toLocaleString('vi-VN')} khách hàng.`);
     }
@@ -150,14 +162,21 @@ export class CustomerExcelService {
     const validRows: CustomerImportRow[] = [];
     const issues: CustomerImportIssue[] = [];
     const filePhones = new Set<string>();
-    dataRows.forEach((row, index) => {
-      const spreadsheetRow = index + 2;
-      const name = this.text(row[columns.name!]);
+    dataRows.forEach(({ row, spreadsheetRow }) => {
+      const name = normalizeCustomerName(this.text(row[columns.name!]));
       const rawPhone = this.text(row[columns.phone!]);
       const phone = normalizePhone(rawPhone);
-      const reason = this.validateRow(name, rawPhone, phone, row, columns, filePhones);
-      if (reason) {
-        issues.push({ row: spreadsheetRow, reason });
+      const issue = this.validateRow(name, rawPhone, phone, row, columns, filePhones);
+      if (issue) {
+        const rawValue = row[columns[issue.field]!];
+        issues.push({
+          row: spreadsheetRow,
+          reason: issue.reason,
+          name: this.text(row[columns.name!]),
+          phone: rawPhone,
+          field: issue.field,
+          value: rawValue instanceof Date ? this.toDateValue(rawValue) : this.text(rawValue),
+        });
         return;
       }
 
@@ -215,7 +234,7 @@ export class CustomerExcelService {
 
   private customerData(row: CustomerImportRow) {
     return {
-      name: row.name.trim(),
+      name: normalizeCustomerName(row.name),
       phone: row.phone,
       birthday: row.birthday ? new Date(`${row.birthday}T00:00:00.000Z`) : null,
       gender: row.gender ?? null,
@@ -225,7 +244,7 @@ export class CustomerExcelService {
   }
 
   private sanitizeSubmittedRow(row: CustomerImportRow, index: number): CustomerImportRow {
-    const name = this.text(row?.name);
+    const name = normalizeCustomerName(this.text(row?.name));
     const phone = normalizePhone(this.text(row?.phone));
     const birthday = this.parseDate(row?.birthday);
     const gender = this.parseGender(row?.gender);
@@ -233,8 +252,11 @@ export class CustomerExcelService {
     const note = this.text(row?.note);
     const hasInvalidBirthday = Boolean(this.text(row?.birthday)) && !birthday;
     const hasInvalidGender = Boolean(this.text(row?.gender)) && !gender;
+    if (birthday && !isCustomerBirthday(birthday)) {
+      throw new BadRequestException(`Ngày sinh ở dòng ${row?.row ?? index} không được sau hôm nay.`);
+    }
     if (
-      !name || name.length > 120 || !/^0\d{9,10}$/.test(phone) || hasInvalidBirthday || hasInvalidGender
+      !isCustomerName(name) || name.length > 120 || !isVietnamPhone(phone) || hasInvalidBirthday || hasInvalidGender
       || address.length > 500 || note.length > 2_000
     ) {
       throw new BadRequestException(`Dữ liệu khách hàng ở dòng ${row?.row ?? index} không hợp lệ. Vui lòng xem trước file và thử lại.`);
@@ -266,20 +288,23 @@ export class CustomerExcelService {
     row: unknown[],
     columns: ColumnMap,
     filePhones: Set<string>,
-  ): string | null {
-    if (!name) return 'Thiếu họ tên.';
-    if (name.length > 120) return 'Họ tên tối đa 120 ký tự.';
-    if (!rawPhone) return 'Thiếu số điện thoại.';
-    if (!/^0\d{9,10}$/.test(phone)) return 'Số điện thoại không hợp lệ.';
-    if (filePhones.has(phone)) return 'Số điện thoại bị trùng trong file.';
+  ): RowValidationIssue | null {
+    if (!name) return { field: 'name', reason: 'Thiếu họ tên.' };
+    if (name.length > 120) return { field: 'name', reason: 'Họ tên tối đa 120 ký tự.' };
+    if (!isCustomerName(name)) return { field: 'name', reason: 'Họ tên chỉ được gồm chữ cái, khoảng trắng, dấu gạch nối hoặc dấu nháy đơn.' };
+    if (!rawPhone) return { field: 'phone', reason: 'Thiếu số điện thoại.' };
+    if (!isVietnamPhone(phone)) return { field: 'phone', reason: 'Số điện thoại Việt Nam 10 số không hợp lệ.' };
+    if (filePhones.has(phone)) return { field: 'phone', reason: 'Số điện thoại bị trùng trong file.' };
     const birthday = columns.birthday === undefined ? undefined : row[columns.birthday];
-    if (this.text(birthday) && !this.parseDate(birthday)) return 'Ngày sinh không hợp lệ.';
+    const parsedBirthday = this.parseDate(birthday);
+    if (this.text(birthday) && !parsedBirthday) return { field: 'birthday', reason: 'Ngày sinh không hợp lệ.' };
+    if (parsedBirthday && !isCustomerBirthday(parsedBirthday)) return { field: 'birthday', reason: 'Ngày sinh không được sau hôm nay.' };
     const gender = columns.gender === undefined ? undefined : row[columns.gender];
-    if (this.text(gender) && !this.parseGender(gender)) return 'Giới tính chỉ có thể là Nam, Nữ hoặc Khác.';
+    if (this.text(gender) && !this.parseGender(gender)) return { field: 'gender', reason: 'Giới tính chỉ có thể là Nam, Nữ hoặc Khác.' };
     const address = this.text(columns.address === undefined ? undefined : row[columns.address]);
-    if (address.length > 500) return 'Địa chỉ tối đa 500 ký tự.';
+    if (address.length > 500) return { field: 'address', reason: 'Địa chỉ tối đa 500 ký tự.' };
     const note = this.text(columns.note === undefined ? undefined : row[columns.note]);
-    if (note.length > 2_000) return 'Ghi chú tối đa 2.000 ký tự.';
+    if (note.length > 2_000) return { field: 'note', reason: 'Ghi chú tối đa 2.000 ký tự.' };
     return null;
   }
 

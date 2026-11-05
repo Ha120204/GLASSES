@@ -15,10 +15,8 @@ enum ProductType {
 }
 
 enum OrderStatus {
-  NEW
-  LENS_ORDERED
-  PROCESSING
-  READY
+  IN_PROGRESS
+  AWAITING_PAYMENT
   DELIVERED
   CANCELLED
 }
@@ -40,7 +38,6 @@ enum PaymentType {
 
 enum UserRole {
   ADMIN
-  STAFF
 }
 
 enum EyeExamAuditAction {
@@ -48,6 +45,12 @@ enum EyeExamAuditAction {
   UPDATED
   LOCKED
   UNLOCKED
+  ARCHIVED
+  RESTORED
+}
+
+enum OrderAuditAction {
+  UPDATED
   ARCHIVED
   RESTORED
 }
@@ -61,8 +64,10 @@ model User {
   createdAt    DateTime @default(now()) @map("created_at")
   createdOrders Order[] @relation("OrderCreator")
   cancelledOrders Order[] @relation("CancelledOrders")
+  archivedOrders Order[] @relation("ArchivedOrders")
   orderPayments Payment[] @relation("OrderPayments")
   orderStatusChanges OrderStatusHistory[] @relation("OrderStatusChangeActor")
+  orderAuditLogs OrderAuditLog[] @relation("OrderAuditActor")
   eyeExamAuditLogs EyeExamAuditLog[] @relation("EyeExamAuditActor")
   lockedEyeExams EyeExam[] @relation("EyeExamLocker")
   archivedEyeExams EyeExam[] @relation("EyeExamArchiver")
@@ -88,6 +93,9 @@ model Customer {
 
 model EyeExam {
   id               String    @id @default(cuid())
+  code             String    @unique @default(dbgenerated("next_eye_exam_code()"))
+  idempotencyKey   String?   @unique @map("idempotency_key")
+  requestHash      String?   @map("request_hash")
   customerId       String    @map("customer_id")
   examDate         DateTime  @map("exam_date") @db.Date
   examiner         String?
@@ -144,6 +152,8 @@ model EyeExamAuditLog {
 model Product {
   id             String          @id @default(cuid())
   sku            String          @unique
+  idempotencyKey String?         @unique @map("idempotency_key")
+  requestHash    String?         @map("request_hash")
   barcode        String?         @unique
   name           String
   type           ProductType
@@ -153,23 +163,37 @@ model Product {
   supplier       String?
   active         Boolean         @default(true)
   deletedAt      DateTime?       @map("deleted_at")
+  imageUpdatedAt DateTime?       @map("image_updated_at")
+  image          ProductImage?
   orderItems     OrderItem[]
   @@map("products")
+}
+
+model ProductImage {
+  productId String  @id @map("product_id")
+  content   Bytes   @db.ByteA
+  thumbnail Bytes?  @db.ByteA
+  mimeType  String  @map("mime_type")
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  @@map("product_images")
 }
 
 model Order {
   id            String          @id @default(cuid())
   code          String          @unique
+  idempotencyKey String?         @unique @map("idempotency_key")
+  requestHash    String?         @map("request_hash")
   customerId    String          @map("customer_id")
   createdById   String?         @map("created_by_id")
   eyeExamId     String?         @map("eye_exam_id")
   prescriptionSnapshot Json?    @map("prescription_snapshot") @db.JsonB
   orderType     OrderType       @default(PREORDER) @map("order_type")
-  status        OrderStatus     @default(NEW)
+  status        OrderStatus     @default(IN_PROGRESS)
   subtotal      Int
   discount      Int             @default(0)
   total         Int
   deposit       Int             @default(0)
+  outstandingAmount Int         @default(0) @map("outstanding_amount")
   depositMethod PaymentMethod?  @map("deposit_method")
   dueDate       DateTime?       @map("due_date") @db.Date
   warrantyUntil DateTime?       @map("warranty_until") @db.Date
@@ -177,6 +201,8 @@ model Order {
   cancellationReason String? @map("cancellation_reason")
   cancelledAt   DateTime? @map("cancelled_at")
   cancelledById String?   @map("cancelled_by_id")
+  archivedAt    DateTime? @map("archived_at")
+  archivedById  String?   @map("archived_by_id")
   createdAt     DateTime        @default(now()) @map("created_at")
   updatedAt     DateTime        @updatedAt @map("updated_at")
   customer      Customer        @relation(fields: [customerId], references: [id])
@@ -185,8 +211,11 @@ model Order {
   items         OrderItem[]
   payments      Payment[]
   cancelledBy   User?     @relation("CancelledOrders", fields: [cancelledById], references: [id], onDelete: SetNull)
+  archivedBy    User?     @relation("ArchivedOrders", fields: [archivedById], references: [id], onDelete: SetNull)
   statusHistory OrderStatusHistory[]
+  auditLogs     OrderAuditLog[]
   @@index([status])
+  @@index([archivedAt, createdAt])
   @@index([dueDate])
   @@index([customerId])
   @@index([createdById])
@@ -208,6 +237,21 @@ model OrderStatusHistory {
   @@map("order_status_history")
 }
 
+model OrderAuditLog {
+  id          String           @id @default(cuid())
+  orderId     String           @map("order_id")
+  action      OrderAuditAction
+  changes     Json?            @db.JsonB
+  createdAt   DateTime         @default(now()) @map("created_at")
+  createdById String?          @map("created_by_id")
+  order       Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  createdBy   User?            @relation("OrderAuditActor", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([orderId, createdAt])
+  @@index([createdById])
+  @@map("order_audit_logs")
+}
+
 model OrderItem {
   id        String   @id @default(cuid())
   orderId   String   @map("order_id")
@@ -223,6 +267,8 @@ model OrderItem {
 model Payment {
   id       String        @id @default(cuid())
   orderId  String        @map("order_id")
+  idempotencyKey String? @unique @map("idempotency_key")
+  requestHash String? @map("request_hash")
   amount   Int
   method   PaymentMethod
   type     PaymentType @default(PAYMENT)
@@ -236,10 +282,16 @@ model Payment {
 }
 
 model Setting {
-  id             String @id @default(cuid())
-  storeName      String @map("store_name")
-  address        String?
-  phone          String?
-  invoiceTemplate String? @map("invoice_template")
+  id                    String  @id @default(cuid())
+  storeName             String  @map("store_name")
+  address               String?
+  phone                 String?
+  invoiceTemplate       String? @map("invoice_template")
+  qrPaymentEnabled      Boolean @default(false) @map("qr_payment_enabled")
+  bankName              String? @map("bank_name")
+  bankBin               String? @map("bank_bin")
+  bankAccountNumber     String? @map("bank_account_number")
+  bankAccountName       String? @map("bank_account_name")
+  transferContentPrefix String  @default("DH") @map("transfer_content_prefix")
   @@map("settings")
 }

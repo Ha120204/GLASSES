@@ -4,6 +4,7 @@ import {
   CalendarOutlined,
   EditOutlined,
   EnvironmentOutlined,
+  EyeOutlined,
   FileTextOutlined,
   PhoneOutlined,
   ShoppingOutlined,
@@ -24,6 +25,8 @@ const genderLabels: Record<string, string> = { MALE: 'Nam', FEMALE: 'Nữ', OTHE
 const formatDate = (value: string | null): string =>
   value ? new Intl.DateTimeFormat('vi-VN', { dateStyle: 'medium' }).format(new Date(value)) : 'Chưa cập nhật';
 const formatMoney = (value: number): string => `${new Intl.NumberFormat('vi-VN').format(value)} ₫`;
+const formatOrderDate = (value: string): string => new Intl.DateTimeFormat('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(value));
+const formatOrderTime = (value: string): string => new Intl.DateTimeFormat('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value));
 
 function CustomerInfo({ customer }: { customer: CustomerDetail }) {
   return <section className="customer-profile__info">
@@ -41,13 +44,13 @@ function CustomerInfo({ customer }: { customer: CustomerDetail }) {
   </section>;
 }
 
-function CustomerOrders({ customer, onViewAll }: { customer: CustomerDetail; onViewAll: () => void }) {
+function CustomerOrders({ customer, onViewAll, onViewOrder }: { customer: CustomerDetail; onViewAll: () => void; onViewOrder: (order: CustomerDetail['orders'][number]) => void }) {
   const ordersTotal = customer.ordersTotal ?? customer.orders.length;
   if (!customer.orders.length) return <Empty description="Chưa có đơn hàng nào." />;
   return <section className="customer-profile__orders">
     <div className="customer-profile__section-heading">
       <span className="customer-profile__section-icon"><ShoppingOutlined /></span>
-      <div><strong>Đơn hàng gần đây</strong><span>Hiển thị tối đa 10 đơn gần nhất của khách hàng.</span></div>
+      <div><strong>Đơn hàng gần đây</strong><span>Tối đa 10 đơn mới nhất · Đơn lưu trữ vẫn có thể xem chi tiết.</span></div>
     </div>
     <Table
       className="customer-profile__orders-table"
@@ -55,15 +58,26 @@ function CustomerOrders({ customer, onViewAll }: { customer: CustomerDetail; onV
       size="small"
       pagination={false}
       dataSource={customer.orders}
-      scroll={{ x: 580 }}
+      scroll={{ x: 850 }}
       columns={[
-        { title: 'Mã đơn', dataIndex: 'code', render: (code: string) => <strong>{code}</strong> },
-        { title: 'Trạng thái', dataIndex: 'status', render: (status: OrderStatus) => <Tag color={orderStatusColors[status]}>{orderStatusLabels[status]}</Tag> },
-        { title: 'Tổng tiền', dataIndex: 'total', align: 'right', render: (total: number) => formatMoney(total) },
+        { title: 'Ngày đặt', dataIndex: 'createdAt', width: 112, render: (createdAt: string) => <div className="customer-profile__order-date"><strong>{formatOrderDate(createdAt)}</strong><span>{formatOrderTime(createdAt)}</span></div> },
+        { title: 'Mã đơn', dataIndex: 'code', width: 177, render: (code: string) => <strong className="customer-profile__order-code">{code}</strong> },
+        { title: 'Sản phẩm', dataIndex: 'items', ellipsis: true, render: (items: CustomerDetail['orders'][number]['items']) => <div className="customer-profile__order-product" title={items.map((item) => item.name).join(', ')}><strong>{items[0]?.name ?? 'Chưa có sản phẩm'}</strong>{items.length > 1 ? <span>+{items.length - 1} sản phẩm khác</span> : null}</div> },
+        { title: 'Trạng thái', dataIndex: 'status', width: 205, render: (status: OrderStatus, order: CustomerDetail['orders'][number]) => <div className="customer-profile__order-tags"><Tag color={orderStatusColors[status]}>{orderStatusLabels[status]}</Tag>{order.archivedAt ? <Tag>Đã lưu trữ</Tag> : null}</div> },
+        { title: 'Giá trị đơn', dataIndex: 'total', width: 125, align: 'right', render: (total: number) => <strong className="customer-profile__order-total">{formatMoney(total)}</strong> },
+        { title: '', key: 'view', width: 62, align: 'center', render: (_: unknown, order: CustomerDetail['orders'][number]) => <Button type="text" icon={<EyeOutlined />} aria-label={`Xem chi tiết đơn ${order.code}`} title="Xem chi tiết" onClick={() => onViewOrder(order)} /> },
       ]}
     />
+    <div className="customer-profile__order-cards">
+      {customer.orders.map((order) => <div className="customer-profile__order-card" key={order.id}>
+        <div className="customer-profile__order-card-top"><div className="customer-profile__order-date"><strong>{formatOrderDate(order.createdAt)}</strong><span>{formatOrderTime(order.createdAt)}</span></div><div className="customer-profile__order-tags"><Tag color={orderStatusColors[order.status]}>{orderStatusLabels[order.status]}</Tag>{order.archivedAt ? <Tag>Đã lưu trữ</Tag> : null}</div></div>
+        <strong className="customer-profile__order-code">{order.code}</strong>
+        <div className="customer-profile__order-product"><strong>{order.items[0]?.name ?? 'Chưa có sản phẩm'}</strong>{order.items.length > 1 ? <span>+{order.items.length - 1} sản phẩm khác</span> : null}</div>
+        <div className="customer-profile__order-card-bottom"><strong>{formatMoney(order.total)}</strong><Button type="link" onClick={() => onViewOrder(order)}>Xem chi tiết</Button></div>
+      </div>)}
+    </div>
     {ordersTotal > customer.orders.length ? <Button className="customer-profile__orders-link" type="link" onClick={onViewAll}>
-      Xem toàn bộ {ordersTotal} đơn hàng
+      Mở danh sách đơn của khách
     </Button> : null}
   </section>;
 }
@@ -83,11 +97,19 @@ export function CustomerProfileModal({ customerId, onClose, onEdit }: CustomerPr
     onClose();
     router.push(`/orders?customerId=${customer.id}`);
   };
+  const viewOrder = (order: CustomerDetail['orders'][number]): void => {
+    if (!customer) return;
+    onClose();
+    const query = new URLSearchParams({ customerId: customer.id, orderId: order.id });
+    if (order.archivedAt) query.set('archiveView', 'ARCHIVED');
+    else if (order.status === 'CANCELLED') query.set('status', 'CANCELLED');
+    router.push(`/orders?${query.toString()}`);
+  };
 
   const tabItems = customer ? [
     { key: 'info', label: 'Thông tin', children: <CustomerInfo customer={customer} /> },
-    { key: 'exams', label: `Phiếu đo mắt (${customer.eyeExams.length})`, children: <CustomerEyeExamTab customerId={customer.id} /> },
-    { key: 'orders', label: `Đơn gần đây (${ordersTotal})`, children: <CustomerOrders customer={customer} onViewAll={viewAllOrders} /> },
+    { key: 'exams', label: `Phiếu đo mắt (${customer.eyeExams.length})`, children: <CustomerEyeExamTab customerId={customer.id} exams={customer.eyeExams} /> },
+    { key: 'orders', label: `Đơn gần đây (${ordersTotal})`, children: <CustomerOrders customer={customer} onViewAll={viewAllOrders} onViewOrder={viewOrder} /> },
   ] : [];
 
   return <Modal

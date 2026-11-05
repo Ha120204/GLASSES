@@ -1,9 +1,11 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, type Customer } from '@prisma/client';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { CustomerQueryDto } from './dto/customer-query.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
-import { normalizePhone } from './phone.util';
+import { isCustomerName, normalizeCustomerName } from './customer-name.util';
+import { isVietnamPhone, normalizePhone } from './phone.util';
+import { isCustomerBirthday } from './customer-birthday.util';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -17,6 +19,7 @@ export class CustomersService {
     const normalizedPhone = q ? normalizePhone(q) : '';
     const where: Prisma.CustomerWhereInput = {
       deletedAt: null,
+      ...(query.gender ? { gender: query.gender } : {}),
       ...(q
         ? {
             OR: [
@@ -31,7 +34,7 @@ export class CustomersService {
         where,
         skip: (query.page - 1) * query.pageSize,
         take: query.pageSize,
-        orderBy: { createdAt: 'desc' },
+        orderBy: [{ [query.sortBy]: query.sortDirection }, { id: 'asc' }],
       }),
       this.prisma.customer.count({ where }),
     ]);
@@ -131,7 +134,13 @@ export class CustomersService {
   }
 
   private async persist(dto: Partial<CreateCustomerDto>, id?: string): Promise<Customer> {
+    const name = dto.name ? normalizeCustomerName(dto.name) : undefined;
     const phone = dto.phone ? normalizePhone(dto.phone) : undefined;
+    if (dto.birthday && !isCustomerBirthday(dto.birthday)) {
+      throw new BadRequestException('Ngày sinh không hợp lệ hoặc sau hôm nay.');
+    }
+    if (name && !isCustomerName(name)) throw new BadRequestException('Họ tên chỉ được gồm chữ cái, khoảng trắng, dấu gạch nối hoặc dấu nháy đơn.');
+    if (phone && !isVietnamPhone(phone)) throw new BadRequestException('Nhập số điện thoại Việt Nam hợp lệ.');
     if (phone) {
       const exists = await this.prisma.customer.findFirst({
         where: { phone, NOT: id ? { id } : undefined },
@@ -139,7 +148,7 @@ export class CustomersService {
       if (exists) throw new ConflictException('Số điện thoại này đã được sử dụng.');
     }
     const data: Prisma.CustomerUncheckedCreateInput | Prisma.CustomerUncheckedUpdateInput = {
-      ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
+      ...(name ? { name } : {}),
       ...(phone ? { phone } : {}),
       ...(dto.birthday !== undefined
         ? { birthday: dto.birthday ? new Date(dto.birthday) : null }

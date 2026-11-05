@@ -9,6 +9,8 @@ import {
 } from '@ant-design/icons';
 import { Button, Form, Input, Modal, Select, Space } from 'antd';
 import { useEffect } from 'react';
+import { validateCustomerName } from '@/lib/customer-name';
+import { validateVietnamPhone } from '@/lib/phone';
 import type { Customer, CustomerInput } from '@/store/api';
 
 interface CustomerFormProps {
@@ -19,11 +21,18 @@ interface CustomerFormProps {
   onSubmit: (values: CustomerInput) => Promise<void>;
 }
 
+const todayInVietnam = (): string => {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+  const value = (type: 'year' | 'month' | 'day'): string => parts.find((part) => part.type === type)!.value;
+  return `${value('year')}-${value('month')}-${value('day')}`;
+};
+
 export function CustomerForm({ open, customer, loading, onClose, onSubmit }: CustomerFormProps) {
   const [form] = Form.useForm<CustomerInput>();
   const isEditing = Boolean(customer);
   useEffect(() => {
     if (open) {
+      form.resetFields();
       form.setFieldsValue(
         customer
           ? {
@@ -75,6 +84,7 @@ export function CustomerForm({ open, customer, loading, onClose, onSubmit }: Cus
         className="customer-form-modal__form"
         form={form}
         layout="vertical"
+        validateTrigger="onSubmit"
         onFinish={onSubmit}
         requiredMark={(label, { required }) => (
           <>
@@ -97,7 +107,7 @@ export function CustomerForm({ open, customer, loading, onClose, onSubmit }: Cus
             <Form.Item
               name="name"
               label="Họ và tên"
-              rules={[{ required: true, whitespace: true, message: 'Vui lòng nhập họ tên.' }]}
+              rules={[{ required: true, whitespace: true, message: 'Vui lòng nhập họ tên.' }, { validator: validateCustomerName }]}
             >
               <Input autoComplete="name" maxLength={120} placeholder="Nguyễn Văn A" prefix={<UserOutlined />} />
             </Form.Item>
@@ -106,7 +116,7 @@ export function CustomerForm({ open, customer, loading, onClose, onSubmit }: Cus
               label="Số điện thoại"
               rules={[
                 { required: true, whitespace: true, message: 'Vui lòng nhập số điện thoại.' },
-                { pattern: /^[+\d.\-\s()]+$/, message: 'Số điện thoại không hợp lệ.' },
+                { validator: validateVietnamPhone },
               ]}
             >
               <Input
@@ -130,8 +140,13 @@ export function CustomerForm({ open, customer, loading, onClose, onSubmit }: Cus
             </div>
           </div>
           <div className="customer-form-modal__grid">
-            <Form.Item name="birthday" label="Ngày sinh">
-              <Input max={new Date().toISOString().slice(0, 10)} type="date" />
+            <Form.Item name="birthday" label="Ngày sinh" rules={[{ validator: async (_rule, value?: string) => {
+              if (!value) return;
+              const date = new Date(`${value}T00:00:00.000Z`);
+              if (/^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value && value <= todayInVietnam()) return;
+              throw new Error('Ngày sinh không hợp lệ hoặc sau hôm nay.');
+            } }]}>
+              <Input max={todayInVietnam()} type="date" />
             </Form.Item>
             <Form.Item name="gender" label="Giới tính">
               <Select

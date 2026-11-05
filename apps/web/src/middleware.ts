@@ -6,7 +6,7 @@ export function middleware(request: NextRequest): NextResponse {
   const isPublic = publicPaths.some((path) => request.nextUrl.pathname.startsWith(path));
   const hasToken = Boolean(request.cookies.get('access_token')?.value);
   if (!hasToken && !isPublic) return NextResponse.redirect(new URL('/login', request.url));
-  if (hasToken && request.nextUrl.pathname === '/login')
+  if (hasToken && request.nextUrl.pathname === '/login' && request.nextUrl.searchParams.get('expired') !== '1')
     return NextResponse.redirect(new URL('/', request.url));
   return NextResponse.next();
 }

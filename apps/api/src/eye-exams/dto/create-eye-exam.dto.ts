@@ -1,11 +1,14 @@
 import { Transform } from 'class-transformer';
-import { IsBoolean, IsDateString, IsIn, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import { IsBoolean, IsDateString, IsIn, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
 import { IsQuarterStep } from './quarter-step.validator';
 
 const toNumber = ({ value }: { value: unknown }): unknown =>
   value === '' || value === undefined ? undefined : value === null ? null : Number(value);
 
 export class CreateEyeExamDto {
+  @IsUUID('4', { message: 'Mã yêu cầu tạo phiếu đo không hợp lệ.' })
+  idempotencyKey!: string;
+
   @IsString()
   @IsNotEmpty({ message: 'Vui lòng chọn khách hàng.' })
   customerId!: string;

@@ -3,7 +3,7 @@ export default function Page() {
   return (
     <PlaceholderPage
       title="Đơn kính"
-      description="Theo dõi đơn kính, tình trạng gia công và lịch giao."
+      description="Theo dõi đơn kính đang thực hiện và ngày hẹn khách quay lại lấy kính."
     />
   );
 }

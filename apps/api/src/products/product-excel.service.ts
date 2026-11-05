@@ -2,12 +2,13 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { ProductType } from '@prisma/client';
 import * as ExcelJS from 'exceljs';
 import * as XLSX from 'xlsx';
+import { colorRequiredHeaderAsterisks } from '../common/excel-required-headers';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProductsService } from './products.service';
 
 const MAX_IMPORT_ROWS = 1_000;
 const PRODUCT_IMPORT_HEADERS = ['Mã sản phẩm', 'Tên sản phẩm*', 'Danh mục*', 'Thương hiệu', 'Mã vạch', 'Giá vốn*', 'Giá bán*', 'Nhà cung cấp', 'Trạng thái'];
-const PRODUCT_EXPORT_HEADERS = ['Mã sản phẩm', 'Tên sản phẩm', 'Danh mục', 'Thương hiệu', 'Mã vạch', 'Giá vốn', 'Giá bán', 'Nhà cung cấp', 'Trạng thái'];
+const PRODUCT_EXPORT_HEADERS = ['Mã sản phẩm', 'Tên sản phẩm*', 'Danh mục*', 'Thương hiệu', 'Mã vạch', 'Giá vốn*', 'Giá bán*', 'Nhà cung cấp', 'Trạng thái'];
 type ImportColumn = 'sku' | 'name' | 'type' | 'brand' | 'barcode' | 'costPrice' | 'salePrice' | 'supplier' | 'active';
 type ColumnMap = Record<ImportColumn, number | undefined>;
 
@@ -41,6 +42,7 @@ export class ProductExcelService {
     worksheet.addRow(PRODUCT_IMPORT_HEADERS);
     for (let index = 0; index < 10; index += 1) worksheet.addRow(Array(PRODUCT_IMPORT_HEADERS.length).fill(null));
     this.formatGrid(worksheet, PRODUCT_IMPORT_HEADERS.length, 11);
+    colorRequiredHeaderAsterisks(worksheet, PRODUCT_IMPORT_HEADERS);
     worksheet.getColumn(6).numFmt = '#,##0';
     worksheet.getColumn(7).numFmt = '#,##0';
 
@@ -60,7 +62,7 @@ export class ProductExcelService {
     return Buffer.from(await workbook.xlsx.writeBuffer());
   }
 
-  async exportActiveProducts(query: { q?: string; type?: ProductType; ids?: string[] }): Promise<Buffer> {
+  async exportActiveProducts(query: { q?: string; type?: ProductType; sortBy?: 'name' | 'salePrice' | 'costPrice'; sortDirection?: 'asc' | 'desc'; ids?: string[] }): Promise<Buffer> {
     const q = query.q?.trim();
     const products = await this.prisma.product.findMany({
       where: {
@@ -72,7 +74,7 @@ export class ProductExcelService {
           { barcode: { contains: q, mode: 'insensitive' } }, { brand: { contains: q, mode: 'insensitive' } },
         ] } : {}),
       },
-      orderBy: { name: 'asc' },
+      orderBy: [{ [query.sortBy ?? 'name']: query.sortDirection ?? 'asc' }, { id: 'asc' }],
     });
     const workbook = new ExcelJS.Workbook();
     workbook.creator = 'Glasses Store';
@@ -86,6 +88,7 @@ export class ProductExcelService {
       product.salePrice, product.supplier ?? '', product.active ? 'Đang kinh doanh' : 'Ngừng kinh doanh',
     ]));
     this.formatGrid(worksheet, PRODUCT_EXPORT_HEADERS.length, products.length + 1);
+    colorRequiredHeaderAsterisks(worksheet, PRODUCT_EXPORT_HEADERS);
     worksheet.getColumn(6).numFmt = '#,##0';
     worksheet.getColumn(7).numFmt = '#,##0';
     return Buffer.from(await workbook.xlsx.writeBuffer());

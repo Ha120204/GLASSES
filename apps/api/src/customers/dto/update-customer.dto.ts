@@ -1,14 +1,20 @@
+import { Transform } from 'class-transformer';
 import { IsDateString, IsIn, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
+import { customerNamePattern, normalizeCustomerName } from '../customer-name.util';
+import { normalizePhone, vietnamPhonePattern } from '../phone.util';
 
 export class UpdateCustomerDto {
   @IsOptional()
   @IsString()
+  @Transform(({ value }: { value: unknown }) => typeof value === 'string' ? normalizeCustomerName(value) : value)
   @MaxLength(120)
+  @Matches(customerNamePattern, { message: 'Họ tên chỉ được gồm chữ cái, khoảng trắng, dấu gạch nối hoặc dấu nháy đơn.' })
   name?: string;
 
   @IsOptional()
   @IsString()
-  @Matches(/^[+\d.\-\s()]+$/, { message: 'Số điện thoại không hợp lệ.' })
+  @Transform(({ value }: { value: unknown }) => typeof value === 'string' ? normalizePhone(value) : value)
+  @Matches(vietnamPhonePattern, { message: 'Nhập số điện thoại Việt Nam 10 số hợp lệ.' })
   phone?: string;
 
   @IsOptional()

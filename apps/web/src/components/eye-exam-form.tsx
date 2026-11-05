@@ -3,12 +3,14 @@
 import { FileTextOutlined, PhoneOutlined, UserAddOutlined, UserOutlined } from '@ant-design/icons';
 import { Alert, Button, Collapse, DatePicker, Form, Input, InputNumber, Modal, Radio, Select, Space, Spin, Switch, message } from 'antd';
 import dayjs, { type Dayjs } from 'dayjs';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { getErrorMessage, type EyeExam, type EyeExamInput, type PrismBase, useCreateCustomerMutation, useCustomerQuery, useCustomersQuery } from '@/store/api';
+import { validateCustomerName } from '@/lib/customer-name';
+import { validateVietnamPhone } from '@/lib/phone';
 
 type SubmitIntent = 'draft' | 'finalize';
 type EyeExamFormValues = Omit<EyeExamInput, 'examDate'> & { examDate: Dayjs };
-interface Props { open: boolean; exam?: EyeExam | null; customerId?: string; onClose: () => void; onSubmit: (values: EyeExamInput, intent: SubmitIntent) => Promise<void>; loading: boolean; }
+interface Props { open: boolean; exam?: EyeExam | null; customerId?: string; onClose: () => void; onSubmit: (values: EyeExamInput, intent: SubmitIntent, idempotencyKey: string) => Promise<void>; loading: boolean; lockCustomer?: boolean; finalizeOnly?: boolean; zIndex?: number; }
 interface QuickCustomerValues { name: string; phone: string; }
 interface CustomerOption { id: string; name: string; phone: string; birthday?: string | null; address?: string | null; }
 
@@ -33,6 +35,7 @@ const prismBaseOptions: Array<{ value: PrismBase; label: string }> = [
   { value: 'BU', label: 'BU · Đáy trên' },
   { value: 'BD', label: 'BD · Đáy dưới' },
 ];
+const prescriptionFields = ['rSph', 'rCyl', 'rAxis', 'rAdd', 'rPd', 'lSph', 'lCyl', 'lAxis', 'lAdd', 'lPd', 'pdTotal', 'rPrism', 'rBase', 'rSegHeight', 'lPrism', 'lBase', 'lSegHeight'] as const;
 
 const hasCylinder = (value: unknown): boolean => typeof value === 'number' && value !== 0;
 const hasPrism = (value: unknown): boolean => typeof value === 'number' && value !== 0;
@@ -45,7 +48,7 @@ const numberRule = (label: string, min: number, max: number, step?: number) => (
   },
 });
 
-export function EyeExamForm({ open, exam, customerId, onClose, onSubmit, loading }: Props) {
+export function EyeExamForm({ open, exam, customerId, onClose, onSubmit, loading, lockCustomer = false, finalizeOnly = false, zIndex }: Props) {
   const [form] = Form.useForm();
   const [quickCustomerForm] = Form.useForm<QuickCustomerValues>();
   const [q, setQ] = useState('');
@@ -53,8 +56,11 @@ export function EyeExamForm({ open, exam, customerId, onClose, onSubmit, loading
   const [selectedCustomerOption, setSelectedCustomerOption] = useState<CustomerOption>();
   const [quickCustomerOpen, setQuickCustomerOpen] = useState(false);
   const [pdMode, setPdMode] = useState<'TOTAL' | 'MONOCULAR'>('TOTAL');
+  const noPrescriptionSwitchId = useId();
   const [messageApi, holder] = message.useMessage();
   const initialized = useRef(false);
+  const createRequestKey = useRef<string | null>(null);
+  const submitting = useRef(false);
   const pdModeChangeRequest = useRef(0);
   const errorClearRequest = useRef(0);
   const rCyl = Form.useWatch('rCyl', form);
@@ -70,13 +76,14 @@ export function EyeExamForm({ open, exam, customerId, onClose, onSubmit, loading
   const debouncedSearchTerm = debouncedQ.trim();
   const isSearchingCustomers = searchTerm.length >= 2;
   const selectedCustomerId = exam?.customerId ?? customerId;
-  const { data, isFetching: isFetchingCustomers } = useCustomersQuery(
+  const { data, isFetching: isFetchingCustomers, isError: isCustomerSearchError, refetch: refetchCustomers } = useCustomersQuery(
     { q: debouncedSearchTerm, page: 1, pageSize: 20 },
     { skip: debouncedSearchTerm.length < 2 },
   );
   const { data: selectedCustomer } = useCustomerQuery(selectedCustomerId ?? '', {
     skip: !selectedCustomerId || Boolean(exam?.customer),
   });
+  const customerSearchFailed = isSearchingCustomers && searchTerm === debouncedSearchTerm && isCustomerSearchError && !isFetchingCustomers;
   const [createCustomer, createCustomerState] = useCreateCustomerMutation();
   const warnings = useMemo(() => {
     const values = [numberValue(rSph), numberValue(lSph), numberValue(rCyl), numberValue(lCyl)];
@@ -100,9 +107,12 @@ export function EyeExamForm({ open, exam, customerId, onClose, onSubmit, loading
   useEffect(() => {
     if (!open) {
       initialized.current = false;
+      createRequestKey.current = null;
+      submitting.current = false;
       return;
     }
     if (initialized.current) return;
+    createRequestKey.current = null;
     form.resetFields();
     form.setFieldsValue(exam ? {
       ...exam,
@@ -123,6 +133,7 @@ export function EyeExamForm({ open, exam, customerId, onClose, onSubmit, loading
     try {
       const customer = await createCustomer(values).unwrap();
       form.setFieldsValue({ customerId: customer.id });
+      createRequestKey.current = null;
       setSelectedCustomerOption(customer);
       setQuickCustomerOpen(false);
       messageApi.success('Đã thêm và chọn khách hàng.');
@@ -132,7 +143,7 @@ export function EyeExamForm({ open, exam, customerId, onClose, onSubmit, loading
   };
   const customerOptions = useMemo(() => {
     const currentCustomer = selectedCustomerOption ?? exam?.customer ?? selectedCustomer;
-    const searchResults = isSearchingCustomers ? (data?.items ?? []) : [];
+    const searchResults = isSearchingCustomers && !customerSearchFailed ? (data?.items ?? []) : [];
     const customers = currentCustomer && !searchResults.some((customer) => customer.id === currentCustomer.id)
       ? [currentCustomer, ...searchResults]
       : searchResults;
@@ -141,7 +152,7 @@ export function EyeExamForm({ open, exam, customerId, onClose, onSubmit, loading
       label: `${customer.name} — ${customer.phone}`,
       customer,
     }));
-  }, [data?.items, exam?.customer, isSearchingCustomers, selectedCustomer, selectedCustomerOption]);
+  }, [customerSearchFailed, data?.items, exam?.customer, isSearchingCustomers, selectedCustomer, selectedCustomerOption]);
   const scrollToField = (name: string | string[]): void => {
     window.requestAnimationFrame(() => form.scrollToField(name, { block: 'center', focus: true }));
   };
@@ -149,17 +160,24 @@ export function EyeExamForm({ open, exam, customerId, onClose, onSubmit, loading
     const request = ++errorClearRequest.current;
     window.requestAnimationFrame(() => {
       if (request !== errorClearRequest.current) return;
-      form.setFields(names.map((name) => ({ name, errors: form.getFieldError(name).filter((error) => !/^(Cần nhập|Vui lòng nhập|Vui lòng nêu)/.test(error)) })));
+      const fields = names.flatMap((name) => {
+        const errors = form.getFieldError(name);
+        const remainingErrors = errors.filter((error) => !/^(Cần nhập|Vui lòng nhập|Vui lòng nêu)/.test(error));
+        return remainingErrors.length === errors.length ? [] : [{ name, errors: remainingErrors }];
+      });
+      if (fields.length) form.setFields(fields);
     });
   };
   const clearFieldErrors = (names: string[]): void => {
     const request = ++errorClearRequest.current;
     window.requestAnimationFrame(() => {
       if (request !== errorClearRequest.current) return;
-      form.setFields(names.map((name) => ({ name, errors: [] })));
+      const fields = names.filter((name) => form.getFieldError(name).length > 0).map((name) => ({ name, errors: [] }));
+      if (fields.length) form.setFields(fields);
     });
   };
   const changePdMode = (mode: 'TOTAL' | 'MONOCULAR'): void => {
+    createRequestKey.current = null;
     setPdMode(mode);
     const request = ++pdModeChangeRequest.current;
     window.requestAnimationFrame(() => {
@@ -168,7 +186,7 @@ export function EyeExamForm({ open, exam, customerId, onClose, onSubmit, loading
       clearFieldErrors(['pdTotal', 'rPd', 'lPd']);
     });
   };
-  const save = async (intent: SubmitIntent): Promise<void> => {
+  const submitExam = async (intent: SubmitIntent): Promise<void> => {
     let values: EyeExamFormValues;
     try {
       values = (intent === 'finalize'
@@ -197,18 +215,53 @@ export function EyeExamForm({ open, exam, customerId, onClose, onSubmit, loading
         return;
       }
     }
-    await onSubmit({ ...values, examDate: values.examDate.format('YYYY-MM-DD') }, intent);
+    createRequestKey.current ??= crypto.randomUUID();
+    await onSubmit({ ...values, examDate: values.examDate.format('YYYY-MM-DD') }, intent, createRequestKey.current);
+  };
+  const save = async (intent: SubmitIntent): Promise<void> => {
+    if ((finalizeOnly && intent !== 'finalize') || submitting.current) return;
+    submitting.current = true;
+    try {
+      await submitExam(intent);
+    } finally {
+      submitting.current = false;
+    }
   };
   const handleValuesChange = (changedValues: Record<string, unknown>): void => {
+    createRequestKey.current = null;
     clearCompletionErrors(Object.keys(changedValues));
     if (Object.hasOwn(changedValues, 'rCyl') && !hasCylinder(changedValues.rCyl)) form.setFieldValue('rAxis', null);
     if (Object.hasOwn(changedValues, 'lCyl') && !hasCylinder(changedValues.lCyl)) form.setFieldValue('lAxis', null);
     if (Object.hasOwn(changedValues, 'rPrism') && !hasPrism(changedValues.rPrism)) form.setFieldValue('rBase', null);
     if (Object.hasOwn(changedValues, 'lPrism') && !hasPrism(changedValues.lPrism)) form.setFieldValue('lBase', null);
     if (changedValues.noPrescription) {
-      form.setFieldsValue({ rSph: null, rCyl: null, rAxis: null, rAdd: null, rPd: null, lSph: null, lCyl: null, lAxis: null, lAdd: null, lPd: null, pdTotal: null, rPrism: null, rBase: null, rSegHeight: null, lPrism: null, lBase: null, lSegHeight: null });
-      clearFieldErrors(['rSph', 'rCyl', 'rAxis', 'rAdd', 'rPd', 'lSph', 'lCyl', 'lAxis', 'lAdd', 'lPd', 'pdTotal', 'rPrism', 'rBase', 'rSegHeight', 'lPrism', 'lBase', 'lSegHeight']);
+      clearPrescription();
     }
+  };
+  const clearPrescription = (): void => {
+    form.setFieldsValue(Object.fromEntries(prescriptionFields.map((field) => [field, null])));
+    clearFieldErrors([...prescriptionFields]);
+  };
+  const confirmNoPrescription = (checked: boolean): boolean => {
+    if (!checked || !prescriptionFields.some((field) => {
+      const value = form.getFieldValue(field);
+      return value !== null && value !== undefined && value !== '';
+    })) return checked;
+    Modal.confirm({
+      className: 'customer-action-confirm eye-exam-confirm--discard',
+      title: 'Xóa các thông số đã nhập?',
+      content: 'Bật “Không kê đơn kính” sẽ xóa toàn bộ thông số khúc xạ và lắp tròng đã nhập trong phiếu này.',
+      okText: 'Xóa thông số',
+      okButtonProps: { danger: true },
+      cancelText: 'Giữ thông số',
+      width: 520,
+      onOk: () => {
+        createRequestKey.current = null;
+        form.setFieldValue('noPrescription', true);
+        clearPrescription();
+      },
+    });
+    return false;
   };
   const hasAdvancedValues = Boolean(exam && (exam.rPrism !== null || exam.lPrism !== null || exam.rSegHeight !== null || exam.lSegHeight !== null));
   const close = (): void => {
@@ -221,29 +274,33 @@ export function EyeExamForm({ open, exam, customerId, onClose, onSubmit, loading
       return;
     }
     Modal.confirm({
-      title: 'Hủy phiếu đo đang nhập?',
-      content: 'Những thay đổi chưa lưu sẽ bị mất.',
-      okText: 'Hủy phiếu',
+      className: 'customer-action-confirm eye-exam-confirm--discard',
+      title: 'Bỏ phiếu đo đang nhập?',
+      content: 'Những thông tin chưa lưu sẽ bị mất và không thể khôi phục.',
+      okText: 'Bỏ phiếu',
       okButtonProps: { danger: true },
       cancelText: 'Tiếp tục nhập',
+      width: 520,
       onOk: close,
     });
   };
 
   return <Modal
     className="eye-exam-modal"
-    title={<div className="eye-exam-modal__heading"><span><FileTextOutlined /></span><div><em>PHIẾU ĐO MẮT</em><strong>{exam ? 'Chỉnh sửa phiếu đo' : 'Thêm phiếu đo mắt'}</strong><p>Ghi nhận kết quả đo để sử dụng cho đơn kính.</p></div></div>}
+    title={<div className="eye-exam-modal__heading"><span><FileTextOutlined /></span><div><em>PHIẾU ĐO MẮT</em><strong>{exam ? 'Chỉnh sửa phiếu đo' : finalizeOnly ? 'Tạo phiếu đo cho đơn hàng' : 'Thêm phiếu đo mắt'}</strong><p>{finalizeOnly ? 'Nhập đủ thông số Rx và chốt phiếu để chọn ngay vào đơn.' : 'Ghi nhận kết quả đo để sử dụng cho đơn kính.'}</p></div></div>}
     open={open}
     centered
     onCancel={requestClose}
     width={800}
-    footer={<div className="eye-exam-modal__footer"><span><b>*</b> Lưu nháp cần khách hàng và ngày đo. Chốt phiếu cần đủ thông số Rx.</span><Space size={10}><Button onClick={requestClose}>Hủy</Button><Button loading={loading} onClick={() => void save('draft')}>Lưu nháp</Button><Button className="eye-exam-modal__save" type="primary" loading={loading} onClick={() => void save('finalize')}>Chốt phiếu</Button></Space></div>}
+    zIndex={zIndex}
+    footer={<div className="eye-exam-modal__footer"><span><b>*</b> {finalizeOnly ? 'Cần nhập đủ thông số Rx để chốt và dùng ngay cho đơn này.' : 'Lưu nháp cần khách hàng và ngày đo. Chốt phiếu cần đủ thông số Rx.'}</span><Space size={10}><Button onClick={requestClose}>{finalizeOnly ? 'Đóng' : 'Hủy'}</Button>{!finalizeOnly ? <Button loading={loading} onClick={() => void save('draft')}>Lưu nháp</Button> : null}<Button className="eye-exam-modal__save" type="primary" loading={loading} onClick={() => void save('finalize')}>{finalizeOnly ? 'Chốt & chọn phiếu' : 'Chốt phiếu'}</Button></Space></div>}
   >
     {holder}
     <Form className="eye-exam-form" form={form} layout="vertical" onValuesChange={handleValuesChange}>
       <Form.Item name="customerId" label="Khách hàng" rules={[{ required: true, message: 'Vui lòng chọn khách hàng.' }]}>
         <Select
           showSearch
+          disabled={lockCustomer && Boolean(customerId)}
           searchValue={q}
           filterOption={false}
           onSearch={setQ}
@@ -270,14 +327,17 @@ export function EyeExamForm({ open, exam, customerId, onClose, onSubmit, loading
           notFoundContent={
             searchTerm.length < 2
               ? <div className="eye-exam-customer-select__empty">Nhập tên hoặc số điện thoại để tìm khách hàng</div>
-              : searchTerm !== debouncedSearchTerm || isFetchingCustomers
+              : customerSearchFailed
+                ? null
+                : searchTerm !== debouncedSearchTerm || isFetchingCustomers
                 ? <div className="eye-exam-customer-select__loading"><Spin size="small" /> Đang tìm khách hàng…</div>
                 : <div className="eye-exam-customer-select__empty">Không tìm thấy khách hàng phù hợp</div>
           }
           popupRender={(menu) => <>
             <div className="eye-exam-customer-select__results">
-              {isSearchingCustomers && !isFetchingCustomers && data ? `Tìm thấy ${data.total} khách hàng · hiển thị tối đa 20 kết quả` : 'Tìm khách hàng theo tên hoặc số điện thoại'}
+              {isSearchingCustomers && !isFetchingCustomers && !customerSearchFailed && data ? `Tìm thấy ${data.total} khách hàng · hiển thị tối đa 20 kết quả` : 'Tìm khách hàng theo tên hoặc số điện thoại'}
             </div>
+            {customerSearchFailed ? <div className="eye-exam-customer-select__error" role="alert">Không thể tải kết quả tìm kiếm. <Button type="link" onClick={(event) => { event.stopPropagation(); void refetchCustomers(); }}>Thử lại</Button></div> : null}
             {menu}
             <div className="eye-exam-customer-select__footer"><Button type="link" icon={<UserAddOutlined />} onClick={openQuickCustomer}>Thêm khách hàng nhanh</Button></div>
           </>}
@@ -293,19 +353,19 @@ export function EyeExamForm({ open, exam, customerId, onClose, onSubmit, loading
           <Form.Item name="wearingPurpose" label={<>Nhu cầu sử dụng <span className="eye-exam-form__optional">(không bắt buộc)</span></>}><Select allowClear placeholder="Chọn nhu cầu" options={[{ value: 'DISTANCE', label: 'Nhìn xa' }, { value: 'NEAR', label: 'Đọc gần' }, { value: 'INTERMEDIATE', label: 'Máy tính / trung gian' }, { value: 'MULTIPURPOSE', label: 'Đa mục đích' }]} /></Form.Item>
           <Form.Item name="lensDesign" label={<>Thiết kế tròng <span className="eye-exam-form__optional">(không bắt buộc)</span></>}><Select allowClear placeholder="Chọn loại tròng" options={[{ value: 'SINGLE_VISION', label: 'Tròng đơn' }, { value: 'BIFOCAL', label: 'Hai tròng' }, { value: 'PROGRESSIVE', label: 'Đa tròng' }]} /></Form.Item>
         </div>
-        <div className="eye-exam-form__no-rx"><Form.Item name="noPrescription" valuePropName="checked" noStyle><Switch size="small" /></Form.Item><span>Không kê đơn kính cho lần đo này</span></div>
+        <div className="eye-exam-form__no-rx"><Form.Item name="noPrescription" valuePropName="checked" getValueFromEvent={confirmNoPrescription} noStyle><Switch id={noPrescriptionSwitchId} aria-label="Không kê đơn kính cho lần đo này" size="small" /></Form.Item><label htmlFor={noPrescriptionSwitchId}>Không kê đơn kính cho lần đo này</label></div>
         {noPrescription ? <Form.Item name="noPrescriptionReason" label="Lý do không kê đơn" rules={[{ required: true, whitespace: true, message: 'Vui lòng nêu lý do.' }]}><Input.TextArea rows={2} maxLength={500} showCount placeholder="Ví dụ: chưa cần điều chỉnh hoặc cần chuyển khám chuyên khoa" /></Form.Item> : null}
       </section>
 
       <section className="eye-exam-form__prescription" aria-labelledby="rx-heading">
-        <div className="eye-exam-form__section-heading"><strong id="rx-heading">Thông số khúc xạ</strong><span>SPH, CYL và ADD theo diop (D); AXIS theo độ (°). PD được nhập riêng cho từng mắt (mm).</span></div>
+        <div className="eye-exam-form__section-heading"><strong id="rx-heading">Thông số khúc xạ</strong><span>SPH, CYL và ADD theo diop (D); AXIS theo độ (°). PD (mm) có thể nhập dạng tổng hoặc riêng từng mắt.</span></div>
         <div className="eye-exam-form__pd-mode"><div className="eye-exam-form__pd-choice"><span>Hình thức PD</span><Radio.Group value={pdMode} disabled={noPrescription} onChange={(event) => changePdMode(event.target.value as 'TOTAL' | 'MONOCULAR')}><Radio value="TOTAL">PD tổng</Radio><Radio value="MONOCULAR">PD đơn mắt</Radio></Radio.Group></div>{pdMode === 'TOTAL' ? <Form.Item name="pdTotal" label="PD tổng (mm)" rules={[numberRule('PD tổng', 40, 80, 0.5)]}><InputNumber disabled={noPrescription} changeOnWheel={false} step={0.5} precision={1} placeholder="Ví dụ: 60" /></Form.Item> : null}</div>
         <div className="eye-exam-form__table-wrap"><table className="eye-exam-form__table"><thead><tr><th>Mắt</th>{(pdMode === 'MONOCULAR' ? measurements : measurements.slice(0, 4)).map((measurement) => <th key={measurement.key}>{measurement.label}<small>{measurement.unit}{measurement.key === 'pd' ? ' / mắt' : ''}</small></th>)}</tr></thead><tbody>{rows.map((row) => {
           const cylinder = row.eye === 'OD' ? rCyl : lCyl;
           return <tr key={row.eye}><th scope="row"><strong>{row.eye}</strong><span>{row.label}</span></th>{row.fields.slice(0, pdMode === 'MONOCULAR' ? 5 : 4).map((name, index) => {
             const measurement = measurements[index];
             const axis = measurement.key === 'axis';
-            return <td key={name}><Form.Item name={name} dependencies={axis ? [row.cylinder] : undefined} rules={[numberRule(`${row.eye} ${measurement.label}`, measurement.min, measurement.max, measurement.step), ...(axis ? [{ validator: async (_rule: unknown, value: unknown) => { if (hasCylinder(form.getFieldValue(row.cylinder)) && (value === undefined || value === null)) throw new Error(`Nhập AXIS cho ${row.eye} khi có CYL.`); } }] : [])]}>
+            return <td key={name}><span className="eye-exam-form__cell-label">{measurement.label} ({measurement.unit}{measurement.key === 'pd' ? ' / mắt' : ''})</span><Form.Item name={name} dependencies={axis ? [row.cylinder] : undefined} rules={[numberRule(`${row.eye} ${measurement.label}`, measurement.min, measurement.max, measurement.step), ...(axis ? [{ validator: async (_rule: unknown, value: unknown) => { if (hasCylinder(form.getFieldValue(row.cylinder)) && (value === undefined || value === null)) throw new Error(`Nhập AXIS cho ${row.eye} khi có CYL.`); } }] : [])]}>
               <InputNumber aria-label={`${row.label} ${measurement.label} (${measurement.unit})`} style={{ width: '100%' }} changeOnWheel={false} step={measurement.step} precision={measurement.precision} disabled={noPrescription || (axis && !hasCylinder(cylinder))} placeholder={axis && !hasCylinder(cylinder) ? 'Không áp dụng' : undefined} />
             </Form.Item></td>;
           })}</tr>;
@@ -320,7 +380,7 @@ export function EyeExamForm({ open, exam, customerId, onClose, onSubmit, loading
           const prism = row.eye === 'OD' ? rPrism : lPrism;
           return <section className="eye-exam-form__advanced-eye" key={row.eye}><strong>{row.eye} · {row.label}</strong><div className="eye-exam-form__advanced-fields">
             <Form.Item name={row.prism} label="Prism (Δ)" rules={[numberRule(`${row.eye} Prism`, 0, 20, 0.25)]}><InputNumber changeOnWheel={false} step={0.25} precision={2} style={{ width: '100%' }} /></Form.Item>
-            <Form.Item name={row.base} label="Base" dependencies={[row.prism]} rules={[{ validator: async (_rule, value) => { if (hasPrism(form.getFieldValue(row.prism)) && !value) throw new Error(`Chọn BASE cho ${row.eye} khi có Prism.`); } }]}><Select allowClear disabled={!hasPrism(prism)} placeholder={hasPrism(prism) ? 'Chọn hướng đáy' : 'Không áp dụng'} options={prismBaseOptions} /></Form.Item>
+            <Form.Item name={row.base} label="Base" dependencies={[row.prism]} rules={[{ validator: async (_rule, value) => { if (hasPrism(form.getFieldValue(row.prism)) && !value) throw new Error(`Chọn BASE cho ${row.eye} khi có Prism.`); } }]}><Select allowClear disabled={!hasPrism(prism)} placeholder={hasPrism(prism) ? 'Chọn hướng đáy' : 'Không áp dụng'} options={prismBaseOptions} popupMatchSelectWidth={220} classNames={{ popup: { root: 'eye-exam-base-select-dropdown' } }} /></Form.Item>
             <Form.Item name={row.segHeight} label="Cao lắp tròng (mm)" rules={[numberRule(`${row.eye} cao lắp tròng`, 5, 50, 0.5)]}><InputNumber changeOnWheel={false} step={0.5} precision={1} style={{ width: '100%' }} /></Form.Item>
           </div></section>;
         })}</div></>,
@@ -336,11 +396,11 @@ export function EyeExamForm({ open, exam, customerId, onClose, onSubmit, loading
       onCancel={() => setQuickCustomerOpen(false)}
       footer={<Space size={10}><Button onClick={() => setQuickCustomerOpen(false)}>Hủy</Button><Button type="primary" loading={createCustomerState.isLoading} onClick={() => void quickCustomerForm.submit()}>Tạo và chọn khách</Button></Space>}
     >
-      <Form<QuickCustomerValues> className="quick-customer-modal__form" form={quickCustomerForm} layout="vertical" onFinish={createQuickCustomer}>
-        <Form.Item name="name" label="Họ và tên" rules={[{ required: true, whitespace: true, message: 'Vui lòng nhập họ tên.' }]}>
+      <Form<QuickCustomerValues> className="quick-customer-modal__form" form={quickCustomerForm} layout="vertical" validateTrigger="onSubmit" onFinish={createQuickCustomer}>
+        <Form.Item name="name" label="Họ và tên" rules={[{ required: true, whitespace: true, message: 'Vui lòng nhập họ tên.' }, { validator: validateCustomerName }]}>
           <Input autoFocus autoComplete="name" maxLength={120} placeholder="Nguyễn Văn A" prefix={<UserOutlined />} />
         </Form.Item>
-        <Form.Item name="phone" label="Số điện thoại" rules={[{ required: true, whitespace: true, message: 'Vui lòng nhập số điện thoại.' }, { pattern: /^[+\d.\-\s()]+$/, message: 'Số điện thoại không hợp lệ.' }]}>
+        <Form.Item name="phone" label="Số điện thoại" rules={[{ required: true, whitespace: true, message: 'Vui lòng nhập số điện thoại.' }, { validator: validateVietnamPhone }]}>
           <Input autoComplete="tel" inputMode="tel" maxLength={30} placeholder="0901 234 567" prefix={<PhoneOutlined />} type="tel" />
         </Form.Item>
         <p>Ngày sinh, địa chỉ và ghi chú có thể bổ sung sau trong hồ sơ khách hàng.</p>
