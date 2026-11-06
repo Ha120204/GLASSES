@@ -57,7 +57,9 @@ export default function EyeExamsPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [localOpen, setOpen] = useState(false);
   const createOpen = search.get('create') === '1';
+  const fromOverview = search.get('source') === 'overview';
   const open = createOpen || localOpen;
+  const [nextExam, setNextExam] = useState<EyeExam | null>(null);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [selected, setSelected] = useState<EyeExam | null>(null);
@@ -106,6 +108,7 @@ export default function EyeExamsPage() {
     if (createOpen) {
       const params = new URLSearchParams(queryString);
       params.delete('create');
+      params.delete('source');
       router.replace(`${pathname}${params.size ? `?${params.toString()}` : ''}`, { scroll: false });
     }
   };
@@ -133,12 +136,14 @@ export default function EyeExamsPage() {
 
   const save = async (values: EyeExamInput, intent: 'draft' | 'finalize', idempotencyKey: string): Promise<void> => {
     try {
+      let createdExam: EyeExam | null = null;
       if (activeExam) {
         if (intent === 'finalize') await finalizeExisting({ id: activeExam.id, data: values }).unwrap();
         else await update({ id: activeExam.id, data: values }).unwrap();
-      } else if (intent === 'finalize') await finalize({ ...values, idempotencyKey }).unwrap();
-      else await create({ ...values, idempotencyKey }).unwrap();
-      messageApi.success(intent === 'finalize' ? 'Đã chốt phiếu đo.' : 'Đã lưu bản nháp.');
+      } else if (intent === 'finalize') createdExam = await finalize({ ...values, idempotencyKey }).unwrap();
+      else createdExam = await create({ ...values, idempotencyKey }).unwrap();
+      if (createdExam && fromOverview) setNextExam(createdExam);
+      else messageApi.success(intent === 'finalize' ? 'Đã chốt phiếu đo.' : 'Đã lưu bản nháp.');
       closeForm();
     } catch (error: unknown) {
       messageApi.error(getErrorMessage(error));
@@ -237,10 +242,11 @@ export default function EyeExamsPage() {
         <Button className="eye-exams-page__archive" icon={<InboxOutlined />} onClick={() => setArchiveOpen(true)}>Phiếu lưu trữ</Button>
         <Button className="eye-exams-page__archive" icon={<UploadOutlined />} onClick={() => setImportOpen(true)}>Nhập Excel</Button>
         <Button className="eye-exams-page__archive" icon={<DownloadOutlined />} onClick={() => exportExams()}>Xuất Excel</Button>
-        <Button className="eye-exams-page__create" type="primary" icon={<PlusOutlined />} onClick={() => { setSelected(null); setOpen(true); }}>Thêm phiếu đo</Button>
+        <Button className="eye-exams-page__create" type="primary" icon={<PlusOutlined />} onClick={() => { setNextExam(null); setSelected(null); setOpen(true); }}>Thêm phiếu đo</Button>
       </Space>
     </header>
     {holder}
+    {nextExam && !createOpen ? <Alert className="overview-next-step" type="success" showIcon closable onClose={() => setNextExam(null)} message={`${nextExam.lockedAt ? 'Đã chốt' : 'Đã lưu nháp'} phiếu đo ${nextExam.code}`} description={nextExam.lockedAt ? 'Có thể dùng phiếu này cho đơn hàng tiếp theo.' : 'Chốt phiếu trước khi dùng cho đơn hàng.'} action={nextExam.lockedAt ? <Button type="primary" onClick={() => router.push(`/orders?create=1&customerId=${encodeURIComponent(nextExam.customerId)}&eyeExamId=${encodeURIComponent(nextExam.id)}`)}>Tạo đơn với phiếu này</Button> : <Button onClick={() => { setSelected(nextExam); setOpen(true); setNextExam(null); }}>Tiếp tục chốt phiếu</Button>} /> : null}
     <Card className="eye-exams-workspace" styles={{ body: { padding: 0 } }}>
       <div className="eye-exams-toolbar">
         <div className="eye-exams-toolbar__header">

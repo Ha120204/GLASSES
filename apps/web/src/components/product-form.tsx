@@ -84,22 +84,31 @@ export function ProductForm({ open, product, loading, onClose, onSubmit, onSaved
     ? `/api/products/${product.id}/image?v=${encodeURIComponent(product.imageUpdatedAt)}` : null;
   const previewSrc = imagePreviewUrl ?? savedImageUrl;
 
+  const setSuggestedSku = useCallback((value?: string): void => {
+    // rc-field-form shares empty errors and warnings; replace errors only when needed.
+    form.setFields([{
+      name: 'sku',
+      value,
+      touched: false,
+      ...(form.getFieldError('sku').length ? { errors: [] } : {}),
+    }]);
+  }, [form]);
+
   const requestSkuSuggestion = useCallback((requestedType: ProductType): void => {
     const requestId = ++skuRequestRef.current;
     selectedTypeRef.current = requestedType;
     setSkuSuggestionStatus('loading');
-    // Reset validation errors without replacing the unused warnings array.
-    form.setFields([{ name: 'sku', value: undefined, touched: false, errors: [] }]);
+    setSuggestedSku(undefined);
     void requestNextSku(requestedType).unwrap().then(({ sku }) => {
       if (skuRequestRef.current !== requestId || selectedTypeRef.current !== requestedType || skuModeRef.current !== 'auto') return;
-      form.setFields([{ name: 'sku', value: sku, touched: false, errors: [] }]);
+      setSuggestedSku(sku);
       setSkuSuggestionStatus('idle');
     }).catch(() => {
       if (skuRequestRef.current === requestId && selectedTypeRef.current === requestedType && skuModeRef.current === 'auto') {
         setSkuSuggestionStatus('error');
       }
     });
-  }, [form, requestNextSku]);
+  }, [requestNextSku, setSuggestedSku]);
 
   useEffect(() => {
     if (!open) return;
@@ -235,12 +244,9 @@ export function ProductForm({ open, product, loading, onClose, onSubmit, onSaved
           <Form.Item name="type" label={<>Danh mục <b className="product-form-required">*</b></>} rules={[{ required: true, message: 'Vui lòng chọn loại sản phẩm.' }]}><Select options={productTypeOptions} placeholder="Chọn danh mục" onChange={suggestSku} /></Form.Item>
           <Form.Item name="brand" label="Thương hiệu"><Input maxLength={120} placeholder="VD: Ray-Ban" /></Form.Item>
         </div>
-        <div className="product-form-grid">
-          <Form.Item name="sku" label={<>Mã sản phẩm <b className="product-form-required">*</b></>} extra={skuHelp} rules={[{ required: true, whitespace: true, message: 'Vui lòng nhập mã sản phẩm.' }]}>
-            <Input maxLength={80} placeholder="VD: GONG-001" onChange={() => { skuModeRef.current = 'manual'; skuRequestRef.current += 1; setSkuMode('manual'); setSkuSuggestionStatus('idle'); }} />
-          </Form.Item>
-          <Form.Item name="barcode" label="Mã vạch"><Input maxLength={80} placeholder="Nhập nếu sản phẩm có mã vạch" /></Form.Item>
-        </div>
+        <Form.Item name="sku" label={<>Mã sản phẩm <b className="product-form-required">*</b></>} extra={skuHelp} rules={[{ required: true, whitespace: true, message: 'Vui lòng nhập mã sản phẩm.' }]}>
+          <Input maxLength={80} placeholder="VD: GONG-001" onChange={() => { skuModeRef.current = 'manual'; skuRequestRef.current += 1; setSkuMode('manual'); setSkuSuggestionStatus('idle'); }} />
+        </Form.Item>
       </section>
       <section className="product-form-section">
         <div className="product-form-section__heading"><strong>Ảnh sản phẩm</strong><span>Một ảnh chính để dễ nhận diện khi bán hàng, không bắt buộc.</span></div>

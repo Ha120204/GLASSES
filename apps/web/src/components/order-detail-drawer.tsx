@@ -43,6 +43,7 @@ interface OrderDetailDrawerProps {
   onClose: () => void;
   onEdit: (order: Order) => void;
   onCancelOrder: (order: Order) => void;
+  onRefund: (order: Order) => void;
   onShareZalo: (order: Order) => void;
 }
 const formatMoney = (value: number): string => `${new Intl.NumberFormat('vi-VN').format(value)} đ`;
@@ -63,9 +64,7 @@ const paymentSummary = (order: Order) => {
     return {
       paid,
       balance: 0,
-      label: order.payments.some((payment) => payment.type === 'REFUND')
-        ? 'Đã hoàn tiền'
-        : 'Đã hủy',
+      label: order.refundPendingAmount > 0 ? `Chờ hoàn ${formatMoney(order.refundPendingAmount)}` : order.payments.some((payment) => payment.type === 'REFUND') ? 'Đã hoàn tiền' : 'Đã hủy',
     };
   const balance = Math.max(0, order.total - paid);
   return {
@@ -92,6 +91,21 @@ const formatOrderAuditSummary = (action: 'UPDATED' | 'ARCHIVED' | 'RESTORED', ch
   if (action === 'RESTORED') return 'Đã khôi phục đơn hàng.';
   const labels = Object.keys(changes ?? {}).map((field) => orderAuditFieldLabels[field] ?? field);
   return labels.length ? `Đã cập nhật: ${labels.join(', ')}.` : 'Đã lưu lại đơn hàng.';
+};
+
+interface OrderActivityItem {
+  id: string;
+  occurredAt: string;
+  title: string;
+  detail: string;
+  tone: 'payment' | 'refund' | 'completed' | 'cancelled' | 'pending' | 'created';
+}
+
+const statusActivityTitle = (entry: Order['statusHistory'][number]): string => {
+  if (entry.fromStatus) return orderStatusLabels[entry.toStatus];
+  if (entry.toStatus === 'DELIVERED') return 'Bán và giao ngay';
+  if (entry.toStatus === 'AWAITING_PAYMENT') return 'Tạo đơn chờ thanh toán QR';
+  return 'Tạo đơn';
 };
 
 interface PaymentCollectionModalProps {
@@ -150,7 +164,7 @@ function PaymentCollectionModal({ order, balance, loading, onClose, onSubmit, on
   </>;
 }
 
-export function OrderDetailDrawer({ orderId, onClose, onEdit, onCancelOrder, onShareZalo }: OrderDetailDrawerProps) {
+export function OrderDetailDrawer({ orderId, onClose, onEdit, onCancelOrder, onRefund, onShareZalo }: OrderDetailDrawerProps) {
   const { data: order, isLoading, isError } = useOrderQuery(orderId ?? '', { skip: !orderId });
   const [createPayment, createPaymentState] = useCreateOrderPaymentMutation();
   const [updateStatus, updateStatusState] = useUpdateOrderStatusMutation();
@@ -169,6 +183,43 @@ export function OrderDetailDrawer({ orderId, onClose, onEdit, onCancelOrder, onS
   const visibleStatusHistory = order?.statusHistory.filter(
     (entry) => !entry.fromStatus || entry.fromStatus !== entry.toStatus,
   ) ?? [];
+  const activityItems: OrderActivityItem[] = order
+    ? [
+        ...(order.deposit > 0
+          ? [{
+              id: 'deposit',
+              occurredAt: order.createdAt,
+              title: `Đặt cọc ${formatMoney(order.deposit)}`,
+              detail: order.depositMethod ? paymentMethodLabels[order.depositMethod] : '',
+              tone: 'payment' as const,
+            }]
+          : []),
+        ...order.payments.map((payment) => ({
+          id: `payment-${payment.id}`,
+          occurredAt: payment.paidAt,
+          title: `${payment.type === 'REFUND' ? 'Hoàn tiền' : 'Thanh toán'} ${formatMoney(payment.amount)}`,
+          detail: [
+            paymentMethodLabels[payment.method],
+            payment.note === `Thanh toán QR · ${order.code}` ? 'Qua mã QR' : payment.note,
+            payment.reference ? `Mã giao dịch: ${payment.reference}` : null,
+          ].filter(Boolean).join(' · '),
+          tone: payment.type === 'REFUND' ? 'refund' as const : 'payment' as const,
+        })),
+        ...visibleStatusHistory.map((entry) => ({
+          id: `status-${entry.id}`,
+          occurredAt: entry.createdAt,
+          title: statusActivityTitle(entry),
+          detail: entry.createdBy?.name ?? '',
+          tone: !entry.fromStatus
+            ? 'created' as const
+            : entry.toStatus === 'DELIVERED'
+              ? 'completed' as const
+              : entry.toStatus === 'CANCELLED'
+                ? 'cancelled' as const
+                : 'pending' as const,
+        })),
+      ].sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime())
+    : [];
   const recordQrPayment = async (amount: number): Promise<boolean> => {
     if (!order) return false;
     if (qrRequest.current?.orderId !== order.id || qrRequest.current.amount !== amount) qrRequest.current = { orderId: order.id, amount, key: crypto.randomUUID() };
@@ -232,16 +283,13 @@ export function OrderDetailDrawer({ orderId, onClose, onEdit, onCancelOrder, onS
           <div className="order-detail__heading">
             <Avatar>{order.customer.name.slice(0, 1).toUpperCase()}</Avatar>
             <div>
-              <span>ĐƠN HÀNG</span>
+              <span>ĐƠN HÀNG · {orderTypeLabels[order.orderType]}</span>
               <strong>{order.code}</strong>
               <em>
                 <PhoneOutlined /> {order.customer.name} · {order.customer.phone}
               </em>
             </div>
             <div className="order-detail__heading-tags">
-              <Tag color={order.orderType === 'READY_SALE' ? 'green' : 'blue'}>
-                {orderTypeLabels[order.orderType]}
-              </Tag>
               <Tag color={orderStatusColors[order.status]}>{orderStatusLabels[order.status]}</Tag>
               {order.archivedAt ? <Tag color="default">Đã lưu trữ</Tag> : null}
             </div>
@@ -261,95 +309,87 @@ export function OrderDetailDrawer({ orderId, onClose, onEdit, onCancelOrder, onS
         <>
           <section className="order-detail__overview">
             <div className="order-detail__overview-heading">
-              <div>
-                <strong>Thanh toán</strong>
-                <span>Kiểm tra nhanh tổng tiền và khoản còn phải thu.</span>
-              </div>
+              <strong>Thanh toán</strong>
               <div className="order-detail__payment-action">
-                <Tag
-                  color={summary.balance === 0 ? 'green' : summary.paid > 0 ? 'orange' : 'default'}
-                >
-                  Thanh toán: {summary.label}
-                </Tag>
-                {summary.balance > 0 ? (
+                {order.status !== 'CANCELLED' && summary.balance > 0 ? (
                   <Button type="primary" onClick={openPayment}>
-                    Thu {formatMoney(summary.balance)}
+                    {awaitingQrPayment ? `Mở QR · thu ${formatMoney(summary.balance)}` : `Thu ${formatMoney(summary.balance)}`}
                   </Button>
                 ) : null}
+                {order.refundPendingAmount > 0 ? <Button type="primary" onClick={() => onRefund(order)}>Ghi nhận hoàn {formatMoney(order.refundPendingAmount)}</Button> : null}
               </div>
             </div>
             <div className="order-detail__money-cards">
-              <div>
+              <div className="order-detail__money-card--total">
                 <span>Tổng đơn</span>
                 <strong>{formatMoney(order.total)}</strong>
               </div>
               <div>
-                <span>Đã thu</span>
+                <span>{order.status === 'CANCELLED' ? 'Còn giữ của khách' : 'Đã thu'}</span>
                 <strong>{formatMoney(summary.paid)}</strong>
               </div>
               <div
                 className={
-                  summary.balance > 0
-                    ? 'order-detail__money-card--due'
-                    : 'order-detail__money-card--settled'
+                  order.status === 'CANCELLED'
+                    ? 'order-detail__money-card--cancelled'
+                    : summary.balance > 0
+                      ? 'order-detail__money-card--due'
+                      : 'order-detail__money-card--settled'
                 }
               >
-                <span>{summary.balance > 0 ? 'Còn phải thu' : 'Thanh toán'}</span>
-                <strong>{summary.balance > 0 ? formatMoney(summary.balance) : 'Đã đủ'}</strong>
+                <span>
+                  {order.status === 'CANCELLED'
+                    ? 'Thanh toán'
+                    : summary.balance > 0
+                      ? 'Còn phải thu'
+                      : 'Trạng thái'}
+                </span>
+                <strong>
+                  {order.status === 'CANCELLED'
+                    ? summary.label
+                    : summary.balance > 0
+                      ? formatMoney(summary.balance)
+                      : 'Đã thanh toán đủ'}
+                </strong>
               </div>
             </div>
           </section>
-          <section className="order-detail-section">
-            <div className="order-detail-section__heading">
-              <div>
-                <strong>Hoàn tất đơn hàng</strong>
-                <span>Giao kính sau khi đã kiểm tra và thu đủ tiền của đơn.</span>
-              </div>
-              <Tag color={orderStatusColors[order.status]}>
-                Tình trạng: {orderStatusLabels[order.status]}
-              </Tag>
-            </div>
-            {awaitingQrPayment ? (
-              <div className="order-delivery-action">
+          {canManageActiveOrder ? (
+            <section className="order-detail-section order-detail-section--fulfillment">
+              <div className="order-detail-section__heading">
                 <div>
-                  <strong>Cần xác nhận đã nhận {formatMoney(summary.balance)}</strong>
-                  <span>Mở luồng thu tiền ở phần Thanh toán, sau đó kiểm tra tiền vào tài khoản trước khi hoàn tất đơn.</span>
+                  <strong>{awaitingQrPayment ? 'Chờ thanh toán QR' : 'Giao kính'}</strong>
                 </div>
               </div>
-            ) : order.status === 'IN_PROGRESS' ? (
-              <div className="order-delivery-action">
-                <div>
-                  <strong>
-                    {deliveryBlocked ? `Còn phải thu ${formatMoney(summary.balance)}` : 'Đơn đã thanh toán đủ'}
-                  </strong>
-                  <span>
-                    {deliveryBlocked
-                      ? 'Ghi nhận thanh toán trước khi giao kính cho khách.'
-                      : 'Xác nhận khách đã nhận kính để hoàn tất đơn.'}
-                  </span>
+              {awaitingQrPayment ? (
+                <div className="order-delivery-action">
+                  <div>
+                    <strong>Cần xác nhận đã nhận {formatMoney(summary.balance)}</strong>
+                    <span>Mở luồng thu tiền ở phần Thanh toán, sau đó kiểm tra tiền vào tài khoản trước khi hoàn tất đơn.</span>
+                  </div>
                 </div>
-                <Button
-                  type="primary"
-                  disabled={deliveryBlocked}
-                  loading={updateStatusState.isLoading}
-                  onClick={() => setDeliveryConfirmOpen(true)}
-                >
-                  Giao kính · hoàn tất đơn
-                </Button>
-              </div>
-            ) : (
-              <span className="order-status-finished">
-                {order.status === 'DELIVERED'
-                  ? 'Đơn đã giao kính và hoàn tất.'
-                  : 'Đơn đã hủy, không thể thực hiện thêm thao tác giao hàng.'}
-              </span>
-            )}
-            {deliveryBlocked ? (
-              <div className="order-status-payment-warning">
-                <span>Cần thu đủ {formatMoney(summary.balance)} trước khi giao kính và hoàn tất đơn.</span>
-              </div>
-            ) : null}
-            {canManageActiveOrder ? (
+              ) : (
+                <div className="order-delivery-action">
+                  <div>
+                    <strong>
+                      {deliveryBlocked ? `Cần thu ${formatMoney(summary.balance)} trước khi giao` : 'Đã sẵn sàng giao kính'}
+                    </strong>
+                    <span>
+                      {deliveryBlocked
+                        ? 'Ghi nhận thanh toán trước khi giao kính cho khách.'
+                        : 'Xác nhận khách đã nhận kính để hoàn tất đơn.'}
+                    </span>
+                  </div>
+                  <Button
+                    type="primary"
+                    disabled={deliveryBlocked}
+                    loading={updateStatusState.isLoading}
+                    onClick={() => setDeliveryConfirmOpen(true)}
+                  >
+                    Giao kính · hoàn tất đơn
+                  </Button>
+                </div>
+              )}
               <div className="order-detail__order-actions">
                 <Button icon={<EditOutlined />} onClick={() => onEdit(order)}>Sửa đơn</Button>
                 {order.orderType === 'PREORDER' ? (
@@ -359,15 +399,15 @@ export function OrderDetailDrawer({ orderId, onClose, onEdit, onCancelOrder, onS
                   Hủy đơn
                 </Button>
               </div>
-            ) : null}
-          </section>
+            </section>
+          ) : null}
           <section className="order-detail-section">
             <div className="order-detail-section__heading">
               <div>
                 <strong>
                   <ShoppingOutlined /> Sản phẩm trong đơn
                 </strong>
-                <span>{order.items.length} mặt hàng đã chọn cho khách.</span>
+                <span>{order.items.length} sản phẩm</span>
               </div>
             </div>
             <div className="order-detail__item-table" role="table" aria-label="Sản phẩm trong đơn">
@@ -401,101 +441,46 @@ export function OrderDetailDrawer({ orderId, onClose, onEdit, onCancelOrder, onS
                 )}
               />
             </div>
-            <div className="order-order-summary" aria-label="Tổng tiền đơn hàng">
-              <span>
-                Tạm tính <b>{formatMoney(order.subtotal)}</b>
-              </span>
-              <span>
-                Chiết khấu <b>−{formatMoney(order.discount)}</b>
-              </span>
-              <strong>
-                Tổng đơn <b>{formatMoney(order.total)}</b>
-              </strong>
-            </div>
+            {order.discount > 0 ? (
+              <div className="order-order-summary" aria-label="Tổng tiền đơn hàng">
+                <span>
+                  Tạm tính <b>{formatMoney(order.subtotal)}</b>
+                </span>
+                <span>
+                  Chiết khấu <b>−{formatMoney(order.discount)}</b>
+                </span>
+                <strong>
+                  Tổng đơn <b>{formatMoney(order.total)}</b>
+                </strong>
+              </div>
+            ) : null}
           </section>
-          <section className="order-detail-section">
+          <section className="order-detail-section order-detail-section--activity">
             <div className="order-detail-section__heading">
               <div>
-                <strong>Lịch sử giao dịch</strong>
-                <span>Các khoản đặt cọc, thanh toán và hoàn tiền của đơn.</span>
+                <strong>Hoạt động đơn hàng</strong>
+                <span>Thanh toán và thay đổi trạng thái theo thời gian.</span>
               </div>
             </div>
-            {order.deposit > 0 ? (
-              <List
-                size="small"
-                dataSource={[
-                  {
-                    id: 'deposit',
-                    amount: order.deposit,
-                    method: order.depositMethod,
-                    paidAt: order.createdAt,
-                    note: 'Tiền cọc khi tạo đơn',
-                  },
-                ]}
-                renderItem={(payment) => (
-                  <List.Item>
-                    <span>
-                      {formatMoney(payment.amount)} ·{' '}
-                      {payment.method ? paymentMethodLabels[payment.method] : '—'} ·{' '}
-                      {formatDateTime(payment.paidAt)}
-                    </span>
-                    <span>{payment.note}</span>
-                  </List.Item>
-                )}
-              />
-            ) : null}
-            {order.payments.length ? (
-              <List
-                size="small"
-                dataSource={order.payments}
-                renderItem={(payment) => (
-                  <List.Item>
-                    <span>
-                      {payment.type === 'REFUND' ? '−' : ''}
-                      {formatMoney(payment.amount)} ·{' '}
-                      {payment.type === 'REFUND' ? 'Hoàn tiền' : 'Thanh toán'} ·{' '}
-                      {paymentMethodLabels[payment.method]} · {formatDateTime(payment.paidAt)}
-                    </span>
-                    <span>{payment.note || '—'}</span>
-                  </List.Item>
-                )}
-              />
-            ) : null}
-            {!order.deposit && !order.payments.length ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Chưa có giao dịch thanh toán." /> : null}
+            {activityItems.length ? (
+              <ol className="order-detail__activity-list">
+                {activityItems.map((activity) => (
+                  <li className={`order-detail__activity order-detail__activity--${activity.tone}`} key={activity.id}>
+                    <span className="order-detail__activity-marker" aria-hidden="true" />
+                    <div className="order-detail__activity-content">
+                      <div className="order-detail__activity-topline">
+                        <strong>{activity.title}</strong>
+                        <time dateTime={activity.occurredAt}>{formatDateTime(activity.occurredAt)}</time>
+                      </div>
+                      {activity.detail ? <p>{activity.detail}</p> : null}
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Chưa có hoạt động." />
+            )}
           </section>
-          {visibleStatusHistory.length ? (
-            <section className="order-detail-section">
-              <div className="order-detail-section__heading">
-                <div>
-                  <strong>Lịch sử đơn hàng</strong>
-                  <span>Các mốc tạo đơn, giao kính hoặc hủy đơn.</span>
-                </div>
-              </div>
-              <List
-                size="small"
-                dataSource={visibleStatusHistory}
-                renderItem={(entry) => (
-                  <List.Item>
-                    <span>
-                      <Tag color={orderStatusColors[entry.toStatus]}>
-                        {!entry.fromStatus
-                          ? entry.toStatus === 'DELIVERED'
-                            ? 'Bán và giao ngay'
-                            : entry.toStatus === 'AWAITING_PAYMENT'
-                              ? 'Tạo đơn chờ thanh toán QR'
-                              : 'Tạo đơn'
-                          : orderStatusLabels[entry.toStatus]}
-                      </Tag>
-                    </span>
-                    <span>
-                      {formatDateTime(entry.createdAt)}
-                      {entry.createdBy ? ` · ${entry.createdBy.name}` : ''}
-                    </span>
-                  </List.Item>
-                )}
-              />
-            </section>
-          ) : null}
           {order.auditLogs?.length ? (
             <section className="order-detail-section">
               <div className="order-detail-section__heading">
@@ -552,12 +537,16 @@ export function OrderDetailDrawer({ orderId, onClose, onEdit, onCancelOrder, onS
                 <span>Ghi chú</span>
                 <strong>{order.note || 'Không có ghi chú.'}</strong>
                 {order.cancellationReason ? <em>Lý do hủy: {order.cancellationReason}</em> : null}
+                {order.refundPendingAmount > 0 ? <em>Chờ hoàn {formatMoney(order.refundPendingAmount)} qua {paymentMethodLabels[order.refundMethod ?? 'CASH']}.</em> : null}
+                {order.refundPendingAmount > 0 && order.refundMethod === 'TRANSFER' ? <em>Tài khoản nhận: {order.refundBankName} · ****{order.refundAccountNumber?.slice(-4)} · {order.refundAccountName}</em> : null}
               </div>
             </div>
           </section>
         </>
       ) : null}
-      {paymentOpen && order && summary ? <PaymentCollectionModal order={order} balance={summary.balance} loading={createPaymentState.isLoading} onClose={() => setPaymentOpen(false)} onSubmit={submitPayment} onQrConfirm={recordQrPayment} /> : null}
+      {paymentOpen && order && summary ? awaitingQrPayment
+        ? <PaymentQrModal open order={order} balance={summary.balance} initialAmount={summary.balance} onClose={() => setPaymentOpen(false)} onConfirm={async (amount) => { await recordQrPayment(amount); }} confirming={createPaymentState.isLoading} requireFullPayment confirmLabel="Đã nhận tiền & hoàn tất" />
+        : <PaymentCollectionModal order={order} balance={summary.balance} loading={createPaymentState.isLoading} onClose={() => setPaymentOpen(false)} onSubmit={submitPayment} onQrConfirm={recordQrPayment} /> : null}
       <Modal
         className="order-action-confirm-modal"
         centered

@@ -206,6 +206,7 @@ export interface Payment {
   type: PaymentType;
   paidAt: string;
   note: string | null;
+  reference: string | null;
   createdBy: { id: string; name: string } | null;
 }
 export interface PrescriptionSnapshot {
@@ -238,6 +239,11 @@ export interface Order {
   note: string | null;
   cancellationReason: string | null;
   cancelledAt: string | null;
+  refundPendingAmount: number;
+  refundMethod: PaymentMethod | null;
+  refundBankName: string | null;
+  refundAccountNumber: string | null;
+  refundAccountName: string | null;
   archivedAt: string | null;
   archivedById: string | null;
   createdAt: string;
@@ -488,8 +494,12 @@ export const api = createApi({
       query: ({ id, ...body }) => ({ url: `/orders/${id}/payments`, method: 'POST', body }),
       invalidatesTags: ['Order'],
     }),
-    cancelOrder: builder.mutation<Order, { id: string; reason: string; refundMethod?: PaymentMethod }>({
+    cancelOrder: builder.mutation<Order, { id: string; reason: string; refundMethod?: PaymentMethod; refundBankName?: string; refundAccountNumber?: string; refundAccountName?: string }>({
       query: ({ id, ...body }) => ({ url: `/orders/${id}/cancel`, method: 'POST', body }),
+      invalidatesTags: ['Order', 'Customer'],
+    }),
+    confirmOrderRefund: builder.mutation<Order, { id: string; confirmed: boolean; reference?: string; note?: string }>({
+      query: ({ id, ...body }) => ({ url: `/orders/${id}/refund`, method: 'POST', body }),
       invalidatesTags: ['Order', 'Customer'],
     }),
     archiveOrder: builder.mutation<Order, string>({
@@ -498,6 +508,10 @@ export const api = createApi({
     }),
     restoreOrder: builder.mutation<Order, string>({
       query: (id) => ({ url: `/orders/${id}/restore`, method: 'POST' }),
+      invalidatesTags: ['Order', 'Customer'],
+    }),
+    permanentlyDeleteOrder: builder.mutation<void, string>({
+      query: (id) => ({ url: `/orders/${id}/permanent`, method: 'DELETE' }),
       invalidatesTags: ['Order', 'Customer'],
     }),
   }),
@@ -561,6 +575,8 @@ export const {
   useBulkUpdateOrderStatusMutation,
   useCreateOrderPaymentMutation,
   useCancelOrderMutation,
+  useConfirmOrderRefundMutation,
   useArchiveOrderMutation,
   useRestoreOrderMutation,
+  usePermanentlyDeleteOrderMutation,
 } = api;

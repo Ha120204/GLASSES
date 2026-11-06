@@ -75,7 +75,6 @@ export function ProductDetailModal({ product, open, onClose, onEdit }: ProductDe
         </div>
         <div className="product-detail-modal__grid">
           <DetailItem label="Mã sản phẩm">{product.sku}</DetailItem>
-          <DetailItem label="Mã vạch">{product.barcode || 'Chưa cập nhật'}</DetailItem>
           <DetailItem label="Danh mục">{typeLabels[product.type]}</DetailItem>
           <DetailItem label="Thương hiệu">{product.brand || 'Chưa cập nhật'}</DetailItem>
           <DetailItem label="Nhà cung cấp" full>{product.supplier || 'Chưa cập nhật'}</DetailItem>

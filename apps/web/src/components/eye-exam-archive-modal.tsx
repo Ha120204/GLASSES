@@ -26,13 +26,14 @@ export function EyeExamArchiveModal({ open, onClose }: Props) {
   const [q, setQ] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [deletableById, setDeletableById] = useState<Record<string, boolean>>({});
   const [selectedNames, setSelectedNames] = useState<Record<string, string>>({});
   const [failedItems, setFailedItems] = useState<{ name: string; reason: string }[]>([]);
   const [bulkPending, setBulkPending] = useState<'restore' | 'delete' | null>(null);
   const [messageApi, contextHolder] = message.useMessage();
-  const { data, isFetching, isError } = useArchivedEyeExamsQuery({ q: debouncedQ || undefined, page, pageSize: 10 }, { skip: !open });
+  const { data, isFetching, isError } = useArchivedEyeExamsQuery({ q: debouncedQ || undefined, page, pageSize }, { skip: !open });
   const [restore, restoreState] = useRestoreEyeExamMutation();
   const [permanentlyDelete, permanentlyDeleteState] = usePermanentlyDeleteEyeExamMutation();
   const busy = restoreState.isLoading || permanentlyDeleteState.isLoading || bulkPending !== null;
@@ -54,6 +55,7 @@ export function EyeExamArchiveModal({ open, onClose }: Props) {
     setQ('');
     setDebouncedQ('');
     setPage(1);
+    setPageSize(10);
     setSelectedIds([]);
     setDeletableById({});
     setSelectedNames({});
@@ -186,7 +188,7 @@ export function EyeExamArchiveModal({ open, onClose }: Props) {
         },
       }}
       locale={{ emptyText: isError ? 'Không thể tải danh sách lưu trữ. Vui lòng thử lại.' : 'Chưa có phiếu đo được lưu trữ.' }}
-      pagination={{ current: data?.page ?? page, pageSize: data?.pageSize ?? 10, total: data?.total, showSizeChanger: false, onChange: setPage, showTotal: (total) => `Tổng ${total} phiếu` }}
+      pagination={{ current: page, pageSize, total: data?.total, showSizeChanger: { showSearch: false }, pageSizeOptions: [10, 20, 50, 100], locale: { items_per_page: '/ trang' }, hideOnSinglePage: false, onChange: (nextPage, nextPageSize) => { if (!busy) { setPage(nextPageSize === pageSize ? nextPage : 1); setPageSize(nextPageSize); } }, showTotal: (total) => `Tổng ${total} phiếu` }}
       columns={[
         { title: 'Mã phiếu', dataIndex: 'code', width: 130 },
         { title: 'Khách hàng', width: 240, render: (_: unknown, exam: EyeExam) => <div className="eye-exam-archive__customer"><strong>{exam.customer?.name ?? 'Khách hàng đã xóa'}</strong><span>{exam.customer?.phone ?? '—'}</span></div> },

@@ -1,8 +1,9 @@
-import { Body, Controller, Get, Header, Param, Patch, Post, Query, Req, StreamableFile } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Header, Param, Patch, Post, Query, Req, StreamableFile } from '@nestjs/common';
 import type { AuthenticatedRequest } from '../auth/jwt-cookie.guard';
 import { Roles } from '../auth/roles.decorator';
 import { UserRole } from '@prisma/client';
 import { CancelOrderDto } from './dto/cancel-order.dto';
+import { ConfirmOrderRefundDto } from './dto/confirm-order-refund.dto';
 import { BulkUpdateOrderStatusDto } from './dto/bulk-update-order-status.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { CreateOrderPaymentDto } from './dto/create-order-payment.dto';
@@ -61,6 +62,12 @@ export class OrdersController {
     return this.ordersService.cancel(id, dto, request.user!.sub);
   }
 
+  @Post(':id/refund')
+  @Roles(UserRole.ADMIN)
+  confirmRefund(@Param('id') id: string, @Body() dto: ConfirmOrderRefundDto, @Req() request: AuthenticatedRequest) {
+    return this.ordersService.confirmRefund(id, dto, request.user!.sub);
+  }
+
   @Post(':id/archive')
   @Roles(UserRole.ADMIN)
   archive(@Param('id') id: string, @Req() request: AuthenticatedRequest) {
@@ -71,6 +78,12 @@ export class OrdersController {
   @Roles(UserRole.ADMIN)
   restore(@Param('id') id: string, @Req() request: AuthenticatedRequest) {
     return this.ordersService.restore(id, request.user!.sub);
+  }
+
+  @Delete(':id/permanent')
+  @Roles(UserRole.ADMIN)
+  async permanentlyDelete(@Param('id') id: string): Promise<void> {
+    await this.ordersService.permanentlyDelete(id);
   }
 
   @Post()

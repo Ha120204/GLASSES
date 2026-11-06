@@ -33,6 +33,7 @@ export function CustomerTrashModal({ open, onClose }: CustomerTrashModalProps) {
   const [q, setQ] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [selectedNames, setSelectedNames] = useState<Record<string, string>>({});
   const [failedItems, setFailedItems] = useState<{ name: string; reason: string }[]>([]);
@@ -47,7 +48,7 @@ export function CustomerTrashModal({ open, onClose }: CustomerTrashModalProps) {
     return () => window.clearTimeout(timer);
   }, [debouncedQ, open, q]);
   const { data, isFetching, isError } = useDeletedCustomersQuery(
-    { q: debouncedQ || undefined, page, pageSize: 10 },
+    { q: debouncedQ || undefined, page, pageSize },
     { skip: !open },
   );
   const [restoreCustomer, restoreState] = useRestoreCustomerMutation();
@@ -65,6 +66,7 @@ export function CustomerTrashModal({ open, onClose }: CustomerTrashModalProps) {
     setQ('');
     setDebouncedQ('');
     setPage(1);
+    setPageSize(10);
     setSelectedIds([]);
     setSelectedNames({});
     setFailedItems([]);
@@ -247,11 +249,14 @@ export function CustomerTrashModal({ open, onClose }: CustomerTrashModalProps) {
         size="small"
         locale={{ emptyText: isError ? 'Không thể tải thùng rác. Vui lòng thử lại.' : 'Thùng rác đang trống.' }}
         pagination={{
-          current: data?.page ?? page,
-          pageSize: data?.pageSize ?? 10,
+          current: page,
+          pageSize,
           total: data?.total,
-          showSizeChanger: false,
-          onChange: setPage,
+          showSizeChanger: { showSearch: false },
+          pageSizeOptions: [10, 20, 50, 100],
+          locale: { items_per_page: '/ trang' },
+          hideOnSinglePage: false,
+          onChange: (nextPage, nextPageSize) => { if (!busy) { setPage(nextPageSize === pageSize ? nextPage : 1); setPageSize(nextPageSize); } },
           showTotal: (total) => `Tổng ${total} khách hàng`,
         }}
       />

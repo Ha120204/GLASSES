@@ -15,6 +15,7 @@ import {
   UploadOutlined,
 } from '@ant-design/icons';
 import {
+  Alert,
   Avatar,
   Button,
   Card,
@@ -81,7 +82,9 @@ export default function CustomersPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [editFormOpen, setEditFormOpen] = useState(false);
   const createOpen = searchParams.get('create') === '1';
+  const fromOverview = searchParams.get('source') === 'overview';
   const formOpen = createOpen || editFormOpen;
+  const [nextCustomer, setNextCustomer] = useState<Customer | null>(null);
   const [profileId, setProfileId] = useState<string | null>(null);
   const [trashOpen, setTrashOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -139,6 +142,7 @@ export default function CustomersPage() {
   const hasFilters = Boolean(q || gender || sort !== 'createdAt:desc');
 
   const openCreate = (): void => {
+    setNextCustomer(null);
     setSelected(null);
     setEditFormOpen(false);
     const params = new URLSearchParams(queryString);
@@ -155,14 +159,17 @@ export default function CustomersPage() {
     if (createOpen) {
       const params = new URLSearchParams(queryString);
       params.delete('create');
+      params.delete('source');
       router.replace(`${pathname}${params.size ? `?${params.toString()}` : ''}`, { scroll: false });
     }
   };
   const save = async (values: CustomerInput): Promise<void> => {
     try {
+      let createdCustomer: Customer | null = null;
       if (activeCustomer) await updateCustomer({ id: activeCustomer.id, data: values }).unwrap();
-      else await createCustomer(values).unwrap();
-      messageApi.success(activeCustomer ? 'Đã cập nhật khách hàng.' : 'Đã thêm khách hàng.');
+      else createdCustomer = await createCustomer(values).unwrap();
+      if (createdCustomer && fromOverview) setNextCustomer(createdCustomer);
+      else messageApi.success(activeCustomer ? 'Đã cập nhật khách hàng.' : 'Đã thêm khách hàng.');
       closeForm();
     } catch (error: unknown) {
       messageApi.error(getErrorMessage(error));
@@ -310,6 +317,7 @@ export default function CustomersPage() {
           </Button>
         </Space>
       </header>
+      {nextCustomer && !createOpen ? <Alert className="overview-next-step" type="success" showIcon closable onClose={() => setNextCustomer(null)} message={`Đã thêm khách hàng ${nextCustomer.name}`} description="Tiếp tục tạo đơn hoặc phiếu đo cho khách này." action={<Space wrap><Button type="primary" onClick={() => router.push(`/orders?create=1&customerId=${encodeURIComponent(nextCustomer.id)}`)}>Tạo đơn cho khách</Button><Button onClick={() => router.push(`/eye-exams?create=1&customerId=${encodeURIComponent(nextCustomer.id)}&source=overview`)}>Tạo phiếu đo</Button></Space>} /> : null}
       <Card className="customers-workspace" styles={{ body: { padding: 0 } }}>
         <div className="customers-toolbar">
           <div className="customers-toolbar__intro">

@@ -40,6 +40,7 @@ const productSortOptions: Array<{ value: ProductSort; label: string }> = [
   { value: 'costPrice:asc', label: 'Giá vốn tăng dần' },
   { value: 'costPrice:desc', label: 'Giá vốn giảm dần' },
 ];
+const pageSizes = [10, 20, 50, 100];
 const formatMoney = (value: number): string => `${new Intl.NumberFormat('vi-VN').format(value)} đ`;
 
 export default function ProductsPage() {
@@ -56,6 +57,8 @@ export default function ProductsPage() {
   const [sortBy, sortDirection] = sort.split(':') as ['name' | 'salePrice' | 'costPrice', 'asc' | 'desc'];
   const requestedPage = Number(searchParams.get('page'));
   const page = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+  const requestedPageSize = Number(searchParams.get('pageSize'));
+  const pageSize = pageSizes.includes(requestedPageSize) ? requestedPageSize : 10;
   const [selectedRowKeys, setSelectedRowKeys] = useState<Key[]>([]);
   const [formOpen, setFormOpen] = useState(false);
   const [selected, setSelected] = useState<Product | null>(null);
@@ -63,7 +66,7 @@ export default function ProductsPage() {
   const [trashOpen, setTrashOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [messageApi, contextHolder] = message.useMessage();
-  const { data, isFetching, isError, refetch } = useProductsQuery({ q: q || undefined, type, sortBy, sortDirection, page, pageSize: 10 });
+  const { currentData: data, isFetching, isError, refetch } = useProductsQuery({ q: q || undefined, type, sortBy, sortDirection, page, pageSize });
   const [createProduct, createState] = useCreateProductMutation();
   const [updateProduct, updateState] = useUpdateProductMutation();
   const [deleteProduct] = useDeleteProductMutation();
@@ -91,7 +94,10 @@ export default function ProductsPage() {
     setSelectedRowKeys([]);
   };
   const clearFilters = (): void => { setQInput(''); router.push(pathname, { scroll: false }); setSelectedRowKeys([]); };
-  const goToPage = (nextPage: number): void => updateFilters({ page: nextPage > 1 ? String(nextPage) : undefined });
+  const changePage = (nextPage: number, nextPageSize: number): void => updateFilters({
+    page: nextPageSize === pageSize && nextPage > 1 ? String(nextPage) : undefined,
+    pageSize: nextPageSize === 10 ? undefined : String(nextPageSize),
+  });
 
   const openCreate = (): void => { setSelected(null); setFormOpen(true); };
   const openEdit = (product: Product): void => { setSelected(product); setFormOpen(true); };
@@ -104,7 +110,7 @@ export default function ProductsPage() {
     const persistedId = selected?.id ?? savedProductId;
     if (persistedId) {
       return updateProduct({ id: persistedId, data: {
-        sku: values.sku, barcode: values.barcode, name: values.name, type: values.type,
+        sku: values.sku, name: values.name, type: values.type,
         brand: values.brand, costPrice: values.costPrice, salePrice: values.salePrice,
         supplier: values.supplier, active: values.active,
       } }).unwrap();
@@ -195,7 +201,7 @@ export default function ProductsPage() {
     columnWidth: 52,
   };
   const total = data?.total ?? 0;
-  const firstItem = total ? ((data?.page ?? page) - 1) * (data?.pageSize ?? 10) + 1 : 0;
+  const firstItem = total ? (page - 1) * pageSize + 1 : 0;
   const lastItem = Math.min(firstItem + (data?.items.length ?? 0) - 1, total);
   const hasFilters = Boolean(q || type);
   const pageItems = data?.items ?? [];
@@ -226,7 +232,7 @@ export default function ProductsPage() {
     <Card className="product-workspace" styles={{ body: { padding: 0 } }}>
       <div className="product-toolbar">
         <div className="product-toolbar__filters">
-          <Input className="product-search" prefix={<SearchOutlined />} allowClear value={qInput} onChange={(event) => setQInput(event.target.value)} placeholder="Tìm tên, SKU hoặc mã vạch" aria-label="Tìm sản phẩm" />
+          <Input className="product-search" prefix={<SearchOutlined />} allowClear value={qInput} onChange={(event) => setQInput(event.target.value)} placeholder="Tìm tên, mã sản phẩm hoặc thương hiệu" aria-label="Tìm sản phẩm" />
           <Select className="product-type-select" value={type ?? 'ALL'} onChange={(value: ProductTypeFilter) => updateFilters({ type: value === 'ALL' ? undefined : value })} options={productTypeOptions} aria-label="Lọc theo danh mục" />
           <Select className="product-sort-select" value={sort} onChange={(value: ProductSort) => { const [nextSortBy, nextDirection] = value.split(':'); updateFilters({ sortBy: nextSortBy === 'name' && nextDirection === 'asc' ? undefined : nextSortBy, sortDirection: nextSortBy === 'name' && nextDirection === 'asc' ? undefined : nextDirection }); }} options={productSortOptions} aria-label="Sắp xếp sản phẩm" />
           {hasFilters && <Button className="product-clear-filters" type="text" onClick={clearFilters}>Xóa bộ lọc</Button>}
@@ -252,7 +258,7 @@ export default function ProductsPage() {
         onRow={(product) => ({ onClick: () => setDetail(product) })}
         scroll={{ x: 900 }}
         locale={{ emptyText: emptyState }}
-        pagination={{ current: data?.page ?? page, pageSize: data?.pageSize ?? 10, total, showSizeChanger: false, hideOnSinglePage: true, onChange: goToPage, showTotal: (count, range) => `${range[0]}–${range[1]} trong ${count} sản phẩm` }}
+        pagination={{ current: page, pageSize, total, showSizeChanger: { showSearch: false }, pageSizeOptions: pageSizes, locale: { items_per_page: '/ trang' }, hideOnSinglePage: false, onChange: changePage, showTotal: (count, range) => `${range[0]}–${range[1]} trong ${count} sản phẩm` }}
       />
       <div className="product-mobile" aria-label="Danh sách sản phẩm">
         {isFetching ? <div className="product-mobile__loading" role="status"><Spin /><span>Đang tải sản phẩm...</span></div> : pageItems.length > 0 ? <>
@@ -288,7 +294,10 @@ export default function ProductsPage() {
               </div>
             </article>)}
           </div>
-          {total > (data?.pageSize ?? 10) && <Pagination className="product-mobile__pagination" current={data?.page ?? page} pageSize={data?.pageSize ?? 10} total={total} showSizeChanger={false} onChange={goToPage} />}
+          <div className="product-mobile__pagination">
+            <Pagination simple current={page} pageSize={pageSize} total={total} showSizeChanger={false} onChange={changePage} />
+            <Select aria-label="Số sản phẩm mỗi trang" value={pageSize} options={pageSizes.map((size) => ({ value: size, label: `${size} / trang` }))} onChange={(size: number) => changePage(1, size)} />
+          </div>
         </> : <div className="product-mobile__empty">{emptyState}</div>}
       </div>
     </Card>

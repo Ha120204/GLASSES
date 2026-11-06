@@ -21,6 +21,7 @@ interface OrderFormProps {
   mode?: 'create' | 'edit';
   order?: Order | null;
   initialCustomer?: Pick<Customer, 'id' | 'name' | 'phone'> | null;
+  initialEyeExamId?: string;
 }
 
 interface OrderLineInput {
@@ -77,7 +78,7 @@ const formatExamSelectLabel = (exam: EyeExam): string => exam.noPrescription
   ? `${exam.code} · ${formatExamDate(exam.examDate)} · Không kê đơn kính`
   : `${exam.code} · ${formatExamDate(exam.examDate)} · MP SPH ${formatDiopter(exam.rSph)} · MT SPH ${formatDiopter(exam.lSph)}`;
 
-export function OrderForm({ open, loading, onClose, onSubmit, mode = 'create', order = null, initialCustomer = null }: OrderFormProps) {
+export function OrderForm({ open, loading, onClose, onSubmit, mode = 'create', order = null, initialCustomer = null, initialEyeExamId }: OrderFormProps) {
   const [form] = Form.useForm<OrderFormValues>();
   const requestKey = useRef<string | null>(null);
   const submitting = useRef(false);
@@ -184,9 +185,9 @@ export function OrderForm({ open, loading, onClose, onSubmit, mode = 'create', o
       setSelectedCustomerOption(mode === 'edit' && order ? order.customer : initialCustomer ?? undefined);
       form.setFieldsValue(mode === 'edit' && order ? {
         orderType: order.orderType, customerId: order.customerId, eyeExamId: order.eyeExamId, frameItems: frameOrderItems, lensItems: lensOrderItems, accessoryItems: accessoryOrderItems, discountMode: 'AMOUNT', discountValue: order.discount, deposit: order.deposit, depositMethod: order.depositMethod ?? undefined, dueDate: order.dueDate ?? undefined, warrantyUntil: order.warrantyUntil ?? undefined, note: order.note ?? '',
-      } : { orderType: 'PREORDER', customerId: initialCustomer?.id, eyeExamId: undefined, frameItems: [], lensItems: [], accessoryItems: [], discountMode: 'AMOUNT', discountValue: 0, deposit: 0, depositMethod: undefined, dueDate: undefined, warrantyUntil: undefined, note: '' });
+      } : { orderType: 'PREORDER', customerId: initialCustomer?.id, eyeExamId: initialEyeExamId, frameItems: [], lensItems: [], accessoryItems: [], discountMode: 'AMOUNT', discountValue: 0, deposit: 0, depositMethod: undefined, dueDate: undefined, warrantyUntil: undefined, note: '' });
     }
-  }, [form, initialCustomer?.id, initialProducts, mode, open, order]);
+  }, [form, initialCustomer?.id, initialEyeExamId, initialProducts, mode, open, order]);
   useEffect(() => {
     if (mode === 'create' && orderType === 'READY_SALE') form.setFieldsValue({ deposit: total, dueDate: undefined });
   }, [form, mode, orderType, total]);
@@ -254,7 +255,7 @@ export function OrderForm({ open, loading, onClose, onSubmit, mode = 'create', o
       setQuickEyeExamOpen(false);
       if (intent === 'finalize') {
         requestKey.current = null;
-        window.setTimeout(() => form.setFieldValue('eyeExamId', exam.id), 0);
+        window.setTimeout(() => form.setFieldsValue({ eyeExamId: exam.id }), 0);
         message.success('Đã chốt và chọn phiếu đo mắt cho đơn.');
       } else message.success('Đã lưu nháp phiếu đo. Hãy chốt phiếu trước khi chọn vào đơn.');
     } catch (error: unknown) { message.error(getErrorMessage(error)); }
@@ -280,7 +281,7 @@ export function OrderForm({ open, loading, onClose, onSubmit, mode = 'create', o
     if (!form.getFieldValue('eyeExamId')) return;
     window.requestAnimationFrame(() => {
       if (form.getFieldValue('customerId') === value && form.getFieldValue('eyeExamId')) {
-        form.setFieldValue('eyeExamId', undefined);
+        form.setFieldsValue({ eyeExamId: undefined });
       }
     });
   };
@@ -312,7 +313,7 @@ export function OrderForm({ open, loading, onClose, onSubmit, mode = 'create', o
     onCancel={requestClose}
     footer={<Space><Button onClick={requestClose}>Hủy</Button><Button type="primary" loading={loading} onClick={() => void form.submit()}>{mode === 'edit' ? 'Lưu thay đổi' : total > 0 ? isReadySale ? isReadySaleTransfer ? `Tạo QR thanh toán · ${formatMoney(total)}` : `Thanh toán & hoàn tất · ${formatMoney(total)}` : `Tạo đơn hẹn lấy · ${formatMoney(total)}` : isReadySale ? isReadySaleTransfer ? 'Tạo QR thanh toán' : 'Thanh toán & hoàn tất' : 'Tạo đơn hẹn lấy'}</Button></Space>}
   >
-    <Form<OrderFormValues> form={form} layout="vertical" requiredMark="optional" validateTrigger="onSubmit" onValuesChange={() => { requestKey.current = null; }} onFinish={submit}>
+    <Form<OrderFormValues> form={form} layout="vertical" requiredMark="optional" onValuesChange={() => { requestKey.current = null; }} onFinish={submit}>
       <div className="order-form__workspace">
         <main className="order-form__main">
       {mode === 'create' ? <section className="order-form__type"><div className="order-form__heading"><strong>Loại giao dịch</strong><span>Chọn cách bán phù hợp trước khi nhập sản phẩm và thanh toán.</span></div><Form.Item name="orderType" noStyle><Radio.Group className="order-form__type-options"><Radio.Button value="PREORDER"><strong>Đơn đặt trước / hẹn lấy</strong><span>Nhận cọc và hẹn khách quay lại lấy kính.</span></Radio.Button><Radio.Button value="READY_SALE"><strong>Bán và giao ngay</strong><span>Thu đủ tiền, giao kính và hoàn tất ngay.</span></Radio.Button></Radio.Group></Form.Item></section> : null}

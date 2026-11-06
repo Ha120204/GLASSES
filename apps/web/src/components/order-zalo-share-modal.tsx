@@ -1,9 +1,10 @@
 'use client';
 
-import { CopyOutlined, ExportOutlined, MessageOutlined, PhoneOutlined } from '@ant-design/icons';
+import { CopyOutlined, ExportOutlined, InfoCircleOutlined, MessageOutlined, PhoneOutlined } from '@ant-design/icons';
 import { Alert, Button, Input, Modal, message } from 'antd';
 import { useState } from 'react';
 import { createOrderZaloMessage } from '@/lib/order-zalo-message';
+import { normalizeVietnamPhone } from '@/lib/phone';
 import { type Order, useSettingQuery } from '@/store/api';
 
 interface OrderZaloShareModalProps {
@@ -39,6 +40,8 @@ export function OrderZaloShareModal({ order, onClose }: OrderZaloShareModalProps
   const [editedText, setEditedText] = useState<string | null>(null);
   const [messageApi, contextHolder] = message.useMessage();
   const text = editedText ?? createOrderZaloMessage(order, setting);
+  const customerPhone = normalizeVietnamPhone(order.customer.phone);
+  const zaloChatUrl = `https://chat.zalo.me/?phone=${encodeURIComponent(customerPhone)}&openConv=true`;
 
   const copy = async (value: string, successText: string): Promise<void> => {
     try {
@@ -60,7 +63,7 @@ export function OrderZaloShareModal({ order, onClose }: OrderZaloShareModalProps
       open
       centered
       width={620}
-      title={<span><MessageOutlined /> Chuẩn bị tin Zalo</span>}
+      title={<div className="order-zalo-share-modal__title"><span className="order-zalo-share-modal__icon"><MessageOutlined /></span><div><small>TIN NHẮN CHO KHÁCH</small><strong>Chuẩn bị tin Zalo</strong></div></div>}
       onCancel={onClose}
       footer={
         <div className="order-zalo-share-modal__footer">
@@ -70,12 +73,12 @@ export function OrderZaloShareModal({ order, onClose }: OrderZaloShareModalProps
           </Button>
           <Button
             type="primary"
-            href="https://chat.zalo.me/"
+            href={zaloChatUrl}
             target="_blank"
             rel="noopener noreferrer"
             icon={<ExportOutlined />}
             disabled={isLoading || !text.trim()}
-            onClick={() => void copy(text, 'Đã sao chép tin. Tìm đúng khách trong Zalo rồi dán và gửi.')}
+            onClick={() => void copy(text, 'Đã sao chép tin. Kiểm tra đúng khách trong Zalo rồi dán và gửi.')}
           >
             Sao chép tin & mở Zalo
           </Button>
@@ -83,31 +86,30 @@ export function OrderZaloShareModal({ order, onClose }: OrderZaloShareModalProps
       }
     >
       <div className="order-zalo-share-modal__recipient">
-        <div>
-          <span>Khách nhận</span>
+        <div className="order-zalo-share-modal__recipient-details">
+          <span>GỬI TỚI</span>
           <strong>{order.customer.name}</strong>
-          <span>{order.customer.phone}</span>
+          <span className="order-zalo-share-modal__phone"><PhoneOutlined />{order.customer.phone}</span>
         </div>
-        <Button icon={<PhoneOutlined />} onClick={() => void copy(order.customer.phone, 'Đã sao chép số điện thoại khách.')}>
+        <Button icon={<CopyOutlined />} onClick={() => void copy(order.customer.phone, 'Đã sao chép số điện thoại khách.')}>
           Sao chép SĐT
         </Button>
       </div>
       {isError ? <Alert type="warning" showIcon message="Không tải được thông tin cửa hàng. Kiểm tra nội dung trước khi gửi." /> : null}
-      <label className="order-zalo-share-modal__label" htmlFor="order-zalo-message">
-        Nội dung tin nhắn {isLoading ? '· đang tải thông tin cửa hàng…' : ''}
-      </label>
-      <Input.TextArea
-        id="order-zalo-message"
-        value={text}
-        onChange={(event) => setEditedText(event.target.value)}
-        autoSize={{ minRows: 5, maxRows: 10 }}
-        maxLength={1000}
-        showCount
-      />
-      <p className="order-zalo-share-modal__hint">
-        Zalo mở ở tab mới. Tìm đúng khách bằng số điện thoại, dán nội dung và tự bấm Gửi.
-        Ứng dụng không gửi tin hoặc ghi nhận đã gửi.
-      </p>
+      <div className="order-zalo-share-modal__message">
+        <label className="order-zalo-share-modal__label" htmlFor="order-zalo-message">
+          Nội dung tin nhắn {isLoading ? '· đang tải thông tin cửa hàng…' : ''}
+        </label>
+        <Input.TextArea
+          id="order-zalo-message"
+          value={text}
+          onChange={(event) => setEditedText(event.target.value)}
+          autoSize={{ minRows: 5, maxRows: 10 }}
+          maxLength={1000}
+          showCount
+        />
+      </div>
+      <p className="order-zalo-share-modal__hint"><InfoCircleOutlined /><span>Zalo mở theo số điện thoại của khách ở tab mới. Kiểm tra đúng người nhận, dán nội dung rồi bấm Gửi. Ứng dụng không gửi tin hoặc ghi nhận đã gửi.</span></p>
       </Modal>
     </>
   );

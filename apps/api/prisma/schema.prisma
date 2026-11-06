@@ -201,6 +201,11 @@ model Order {
   cancellationReason String? @map("cancellation_reason")
   cancelledAt   DateTime? @map("cancelled_at")
   cancelledById String?   @map("cancelled_by_id")
+  refundPendingAmount Int @default(0) @map("refund_pending_amount")
+  refundMethod PaymentMethod? @map("refund_method")
+  refundBankName String? @map("refund_bank_name")
+  refundAccountNumber String? @map("refund_account_number")
+  refundAccountName String? @map("refund_account_name")
   archivedAt    DateTime? @map("archived_at")
   archivedById  String?   @map("archived_by_id")
   createdAt     DateTime        @default(now()) @map("created_at")
@@ -215,6 +220,7 @@ model Order {
   statusHistory OrderStatusHistory[]
   auditLogs     OrderAuditLog[]
   @@index([status])
+  @@index([refundPendingAmount])
   @@index([archivedAt, createdAt])
   @@index([dueDate])
   @@index([customerId])
@@ -275,6 +281,7 @@ model Payment {
   createdById String?  @map("created_by_id")
   paidAt   DateTime      @default(now()) @map("paid_at")
   note     String?
+  reference String? @map("reference")
   order    Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
   createdBy User?        @relation("OrderPayments", fields: [createdById], references: [id], onDelete: SetNull)
   @@index([createdById])

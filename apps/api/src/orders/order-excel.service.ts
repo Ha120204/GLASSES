@@ -20,6 +20,7 @@ const headers = [
   'Tình trạng',
   'Bảo hành đến',
   'Ghi chú',
+  'Chờ hoàn tiền',
 ];
 
 const statusLabels: Record<OrderStatus, string> = {
@@ -62,13 +63,13 @@ export class OrderExcelService {
     sheet.columns = [
       { width: 22 }, { width: 15 }, { width: 25 }, { width: 17 }, { width: 42 }, { width: 19 },
       { width: 16 }, { width: 19 }, { width: 16 }, { width: 16 }, { width: 16 }, { width: 21 },
-      { width: 17 }, { width: 42 },
+      { width: 17 }, { width: 42 }, { width: 18 },
     ];
-    sheet.autoFilter = { from: 'A1', to: 'N1' };
+    sheet.autoFilter = { from: 'A1', to: 'O1' };
     [2, 6, 13].forEach((column) => {
       sheet.getColumn(column).numFmt = 'dd/mm/yyyy';
     });
-    [7, 8, 9, 10, 11].forEach((column) => {
+    [7, 8, 9, 10, 11, 15].forEach((column) => {
       sheet.getColumn(column).numFmt = '#,##0';
     });
     this.formatRow(sheet.addRow(headers), true);
@@ -109,6 +110,7 @@ export class OrderExcelService {
           statusLabels[order.status],
           order.warrantyUntil,
           order.note ?? '',
+          order.refundPendingAmount,
         ]));
       }
       cursor = orders.length === 500 ? orders[orders.length - 1].id : undefined;
@@ -127,7 +129,7 @@ export class OrderExcelService {
     const where: Prisma.OrderWhereInput = {
       ...(query.customerId ? { customerId: query.customerId } : {}),
       archivedAt: query.archiveView === 'ARCHIVED' ? { not: null } : null,
-      ...(query.status ? { status: query.status } : query.archiveView === 'ARCHIVED' ? {} : { status: { not: OrderStatus.CANCELLED } }),
+      ...(query.status ? { status: query.status } : {}),
       ...(q
         ? {
             OR: [
@@ -157,7 +159,8 @@ export class OrderExcelService {
       TODAY: { status: { in: [OrderStatus.IN_PROGRESS, OrderStatus.AWAITING_PAYMENT] }, dueDate: { gte: start, lt: end } },
       OVERDUE: { status: { in: [OrderStatus.IN_PROGRESS, OrderStatus.AWAITING_PAYMENT] }, dueDate: { lt: start } },
     };
-    const filteredWhere = query.workFilter ? { AND: [where, workFilters[query.workFilter]] } : where;
+    const activeWhere: Prisma.OrderWhereInput = !query.status && query.archiveView !== 'ARCHIVED' ? { AND: [where, { OR: [{ status: { not: OrderStatus.CANCELLED } }, { refundPendingAmount: { gt: 0 } }] }] } : where;
+    const filteredWhere = query.workFilter ? { AND: [activeWhere, workFilters[query.workFilter]] } : activeWhere;
     if (!query.paymentOutstanding) return filteredWhere;
     return {
       AND: [
@@ -170,7 +173,7 @@ export class OrderExcelService {
 
   private formatRow(row: ExcelJS.Row, header = false): void {
     row.height = header ? 24 : 28;
-    row.eachCell((cell) => {
+    row.eachCell({ includeEmpty: true }, (cell) => {
       cell.border = {
         top: { style: 'thin', color: { argb: 'FF000000' } },
         left: { style: 'thin', color: { argb: 'FF000000' } },
@@ -179,8 +182,7 @@ export class OrderExcelService {
       };
       cell.alignment = { vertical: 'middle', wrapText: true };
       if (header) {
-        cell.font = { bold: true, color: { argb: 'FF24466E' } };
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEAF3FF' } };
+        cell.font = { bold: true };
       }
     });
     row.commit();

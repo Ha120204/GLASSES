@@ -1,8 +1,9 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { OrderAuditAction, OrderStatus, OrderType, PaymentType, Prisma, type EyeExam } from '@prisma/client';
+import { OrderAuditAction, OrderStatus, OrderType, PaymentMethod, PaymentType, Prisma, type EyeExam } from '@prisma/client';
 import { createHash, randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
-import { CancelOrderDto } from './dto/cancel-order.dto';
+import { CancelOrderDto, refundAccountNamePattern } from './dto/cancel-order.dto';
+import { ConfirmOrderRefundDto } from './dto/confirm-order-refund.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { CreateOrderPaymentDto } from './dto/create-order-payment.dto';
 import { OrderQueryDto } from './dto/order-query.dto';
@@ -13,7 +14,7 @@ const orderInclude = {
   createdBy: { select: { id: true, name: true } },
   archivedBy: { select: { id: true, name: true } },
   items: { select: { id: true, productId: true, name: true, unitPrice: true, qty: true, product: { select: { id: true, sku: true, name: true, type: true, brand: true, salePrice: true, active: true, imageUpdatedAt: true } } } },
-  payments: { select: { id: true, amount: true, method: true, type: true, paidAt: true, note: true, createdBy: { select: { id: true, name: true } } }, orderBy: { paidAt: 'desc' } },
+  payments: { select: { id: true, amount: true, method: true, type: true, paidAt: true, note: true, reference: true, createdBy: { select: { id: true, name: true } } }, orderBy: { paidAt: 'desc' } },
   statusHistory: { select: { id: true, fromStatus: true, toStatus: true, createdAt: true, createdBy: { select: { id: true, name: true } } }, orderBy: { createdAt: 'desc' } },
 } as const;
 
@@ -70,10 +71,11 @@ export class OrdersService {
     let where: Prisma.OrderWhereInput = {
       ...(query.customerId ? { customerId: query.customerId } : {}),
       archivedAt: query.archiveView === 'ARCHIVED' ? { not: null } : null,
-      ...(query.status ? { status: query.status } : query.archiveView === 'ARCHIVED' ? {} : { status: { not: OrderStatus.CANCELLED } }),
+      ...(query.status ? { status: query.status } : {}),
       ...(q ? { OR: [{ code: { contains: q, mode: 'insensitive' } }, { customer: { name: { contains: q, mode: 'insensitive' } } }, { customer: { phone: { contains: q } } }, { items: { some: { OR: [{ name: { contains: q, mode: 'insensitive' } }, { product: { sku: { contains: q, mode: 'insensitive' } } }] } } }] } : {}),
       ...(dateFrom || dateTo ? { createdAt: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } } : {}),
     };
+    if (!query.status && query.archiveView !== 'ARCHIVED') where = { AND: [where, { OR: [{ status: { not: OrderStatus.CANCELLED } }, { refundPendingAmount: { gt: 0 } }] }] };
     if (query.workFilter) {
       const { start, end } = vietnamDayRange();
       const workConditions: Record<NonNullable<OrderQueryDto['workFilter']>, Prisma.OrderWhereInput> = {
@@ -199,7 +201,7 @@ export class OrdersService {
 
   async cancel(id: string, dto: CancelOrderDto, cancelledById: string) {
     return this.prisma.$transaction(async (transaction) => {
-      // Cancellation may create a refund. It must be serialized with payment collection.
+      // Cancellation records a refund obligation; money is recorded only after it is actually returned.
       await this.lockOrderForFinancialMutation(transaction, id);
       const order = await transaction.order.findUnique({ where: { id }, include: { payments: { select: { amount: true, type: true } } } });
       if (!order) throw new NotFoundException('Không tìm thấy đơn hàng.');
@@ -207,21 +209,43 @@ export class OrdersService {
       if (order.status === OrderStatus.DELIVERED) throw new ConflictException('Không thể hủy đơn đã giao.');
       const paid = order.deposit + order.payments.reduce((sum, payment) => sum + (payment.type === PaymentType.PAYMENT ? payment.amount : -payment.amount), 0);
       if (paid > 0 && !dto.refundMethod) throw new BadRequestException('Chọn hình thức hoàn tiền trước khi hủy đơn.');
-      if (paid > 0) await transaction.payment.create({ data: { orderId: order.id, amount: paid, method: dto.refundMethod!, type: PaymentType.REFUND, note: `Hoàn tiền khi hủy đơn: ${dto.reason.trim()}`, createdById: cancelledById } });
-      return transaction.order.update({ where: { id }, data: { status: OrderStatus.CANCELLED, outstandingAmount: 0, cancellationReason: dto.reason.trim(), cancelledAt: new Date(), cancelledById, statusHistory: { create: { fromStatus: order.status, toStatus: OrderStatus.CANCELLED, createdById: cancelledById } } }, include: orderInclude });
+      if (paid > 0 && dto.refundMethod === PaymentMethod.TRANSFER && (!dto.refundBankName?.trim() || !dto.refundAccountNumber?.trim() || !dto.refundAccountName?.trim())) {
+        throw new BadRequestException('Nhập đủ ngân hàng, số tài khoản và tên chủ tài khoản để hoàn tiền chuyển khoản.');
+      }
+      if (paid > 0 && dto.refundMethod === PaymentMethod.TRANSFER && !refundAccountNamePattern.test(dto.refundAccountName!.trim())) {
+        throw new BadRequestException('Tên chủ tài khoản phải có chữ và không được chứa số.');
+      }
+      return transaction.order.update({ where: { id }, data: { status: OrderStatus.CANCELLED, outstandingAmount: 0, cancellationReason: dto.reason.trim(), cancelledAt: new Date(), cancelledById, refundPendingAmount: Math.max(0, paid), refundMethod: paid > 0 ? dto.refundMethod : null, refundBankName: paid > 0 && dto.refundMethod === PaymentMethod.TRANSFER ? dto.refundBankName!.trim() : null, refundAccountNumber: paid > 0 && dto.refundMethod === PaymentMethod.TRANSFER ? dto.refundAccountNumber!.trim() : null, refundAccountName: paid > 0 && dto.refundMethod === PaymentMethod.TRANSFER ? dto.refundAccountName!.trim() : null, statusHistory: { create: { fromStatus: order.status, toStatus: OrderStatus.CANCELLED, createdById: cancelledById } } }, include: orderInclude });
+    });
+  }
+
+  async confirmRefund(id: string, dto: ConfirmOrderRefundDto, refundedById: string) {
+    return this.prisma.$transaction(async (transaction) => {
+      await this.lockOrderForFinancialMutation(transaction, id);
+      const order = await transaction.order.findUnique({ where: { id }, select: { status: true, refundPendingAmount: true, refundMethod: true, archivedAt: true } });
+      if (!order) throw new NotFoundException('Không tìm thấy đơn hàng.');
+      if (order.status !== OrderStatus.CANCELLED || order.refundPendingAmount <= 0 || !order.refundMethod || order.archivedAt) {
+        throw new ConflictException('Đơn không có khoản hoàn tiền đang chờ xử lý.');
+      }
+      if (!dto.confirmed) throw new BadRequestException('Chỉ ghi nhận sau khi đã trả tiền cho khách.');
+      const reference = dto.reference?.trim();
+      if (order.refundMethod === PaymentMethod.TRANSFER && !reference) throw new BadRequestException('Nhập mã giao dịch chuyển khoản sau khi đã hoàn tiền.');
+      await transaction.payment.create({ data: { orderId: id, amount: order.refundPendingAmount, method: order.refundMethod, type: PaymentType.REFUND, reference: reference || null, note: dto.note?.trim() || 'Hoàn tiền sau khi hủy đơn', createdById: refundedById } });
+      return transaction.order.update({ where: { id }, data: { refundPendingAmount: 0 }, include: orderInclude });
     });
   }
 
   async archive(id: string, archivedById: string) {
     return this.prisma.$transaction(async (transaction) => {
       await this.lockOrderForFinancialMutation(transaction, id);
-      const order = await transaction.order.findUnique({ where: { id }, select: { status: true, outstandingAmount: true, archivedAt: true } });
+      const order = await transaction.order.findUnique({ where: { id }, select: { status: true, outstandingAmount: true, archivedAt: true, refundPendingAmount: true } });
       if (!order) throw new NotFoundException('Không tìm thấy đơn hàng.');
       if (order.archivedAt) throw new ConflictException('Đơn hàng đã được lưu trữ.');
       if (order.status !== OrderStatus.DELIVERED && order.status !== OrderStatus.CANCELLED) {
         throw new ConflictException('Chỉ có thể lưu trữ đơn đã giao hoặc đã hủy.');
       }
       if (order.outstandingAmount !== 0) throw new ConflictException('Không thể lưu trữ đơn còn phải thu.');
+      if (order.refundPendingAmount > 0) throw new ConflictException('Hoàn tiền cho khách trước khi lưu trữ đơn.');
       const archived = await transaction.order.update({
         where: { id },
         data: { archivedAt: new Date(), archivedById },
@@ -248,6 +272,18 @@ export class OrdersService {
     });
   }
 
+  async permanentlyDelete(id: string): Promise<void> {
+    await this.prisma.$transaction(async (transaction) => {
+      await this.lockOrderForFinancialMutation(transaction, id);
+      const order = await transaction.order.findUnique({ where: { id }, select: { status: true, archivedAt: true, refundPendingAmount: true } });
+      if (!order) throw new NotFoundException('Không tìm thấy đơn hàng.');
+      if (order.status !== OrderStatus.CANCELLED) throw new ConflictException('Chỉ có thể xóa vĩnh viễn đơn đã hủy.');
+      if (!order.archivedAt) throw new ConflictException('Hãy lưu trữ đơn đã hủy trước khi xóa vĩnh viễn.');
+      if (order.refundPendingAmount > 0) throw new ConflictException('Hoàn tiền cho khách trước khi xóa vĩnh viễn đơn.');
+      await transaction.order.delete({ where: { id } });
+    });
+  }
+
   async createPayment(id: string, dto: CreateOrderPaymentDto, createdById: string) {
     const requestHash = this.hashRequest({ id, ...dto });
     const previous = await this.prisma.payment.findUnique({ where: { idempotencyKey: dto.idempotencyKey } });
@@ -269,6 +305,9 @@ export class OrdersService {
       if (order.status === OrderStatus.CANCELLED) throw new ConflictException('Không thể ghi nhận thanh toán cho đơn đã hủy.');
       const paid = order.deposit + order.payments.reduce((sum, payment) => sum + (payment.type === PaymentType.PAYMENT ? payment.amount : -payment.amount), 0);
       if (dto.amount > order.total - paid) throw new BadRequestException('Số tiền thanh toán vượt quá số tiền còn lại của đơn.');
+      if (order.status === OrderStatus.AWAITING_PAYMENT && (dto.method !== PaymentMethod.TRANSFER || dto.amount !== order.total - paid)) {
+        throw new BadRequestException('Đơn chờ thanh toán QR cần nhận đủ số tiền còn lại bằng chuyển khoản.');
+      }
       const payment = await transaction.payment.create({ data: { orderId: id, idempotencyKey: dto.idempotencyKey, requestHash, amount: dto.amount, method: dto.method, note: dto.note?.trim() || null, createdById } });
       if (order.status === OrderStatus.AWAITING_PAYMENT && paid + dto.amount === order.total) {
         await transaction.order.update({ where: { id }, data: { status: OrderStatus.DELIVERED, outstandingAmount: 0, statusHistory: { create: { fromStatus: OrderStatus.AWAITING_PAYMENT, toStatus: OrderStatus.DELIVERED, createdById } } } });

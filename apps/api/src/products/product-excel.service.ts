@@ -7,8 +7,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ProductsService } from './products.service';
 
 const MAX_IMPORT_ROWS = 1_000;
-const PRODUCT_IMPORT_HEADERS = ['Mã sản phẩm', 'Tên sản phẩm*', 'Danh mục*', 'Thương hiệu', 'Mã vạch', 'Giá vốn*', 'Giá bán*', 'Nhà cung cấp', 'Trạng thái'];
-const PRODUCT_EXPORT_HEADERS = ['Mã sản phẩm', 'Tên sản phẩm*', 'Danh mục*', 'Thương hiệu', 'Mã vạch', 'Giá vốn*', 'Giá bán*', 'Nhà cung cấp', 'Trạng thái'];
+const PRODUCT_IMPORT_HEADERS = ['Mã sản phẩm', 'Tên sản phẩm*', 'Danh mục*', 'Thương hiệu', 'Giá vốn*', 'Giá bán*', 'Nhà cung cấp', 'Trạng thái'];
+const PRODUCT_EXPORT_HEADERS = ['Mã sản phẩm', 'Tên sản phẩm*', 'Danh mục*', 'Thương hiệu', 'Giá vốn*', 'Giá bán*', 'Nhà cung cấp', 'Trạng thái'];
 type ImportColumn = 'sku' | 'name' | 'type' | 'brand' | 'barcode' | 'costPrice' | 'salePrice' | 'supplier' | 'active';
 type ColumnMap = Record<ImportColumn, number | undefined>;
 
@@ -37,14 +37,14 @@ export class ProductExcelService {
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Sản phẩm', { views: [{ state: 'frozen', ySplit: 1 }] });
     worksheet.columns = [
-      { width: 20 }, { width: 34 }, { width: 18 }, { width: 20 }, { width: 20 }, { width: 15 }, { width: 15 }, { width: 24 }, { width: 18 },
+      { width: 20 }, { width: 34 }, { width: 18 }, { width: 20 }, { width: 15 }, { width: 15 }, { width: 24 }, { width: 18 },
     ];
     worksheet.addRow(PRODUCT_IMPORT_HEADERS);
     for (let index = 0; index < 10; index += 1) worksheet.addRow(Array(PRODUCT_IMPORT_HEADERS.length).fill(null));
     this.formatGrid(worksheet, PRODUCT_IMPORT_HEADERS.length, 11);
     colorRequiredHeaderAsterisks(worksheet, PRODUCT_IMPORT_HEADERS);
+    worksheet.getColumn(5).numFmt = '#,##0';
     worksheet.getColumn(6).numFmt = '#,##0';
-    worksheet.getColumn(7).numFmt = '#,##0';
 
     const guide = workbook.addWorksheet('Hướng dẫn');
     guide.columns = [{ width: 112 }];
@@ -80,17 +80,17 @@ export class ProductExcelService {
     workbook.creator = 'Glasses Store';
     const worksheet = workbook.addWorksheet('Sản phẩm', { views: [{ state: 'frozen', ySplit: 1 }] });
     worksheet.columns = [
-      { width: 20 }, { width: 34 }, { width: 18 }, { width: 20 }, { width: 20 }, { width: 15 }, { width: 15 }, { width: 24 }, { width: 18 },
+      { width: 20 }, { width: 34 }, { width: 18 }, { width: 20 }, { width: 15 }, { width: 15 }, { width: 24 }, { width: 18 },
     ];
     worksheet.addRow(PRODUCT_EXPORT_HEADERS);
     products.forEach((product) => worksheet.addRow([
-      product.sku, product.name, TYPE_LABELS[product.type], product.brand ?? '', product.barcode ?? '', product.costPrice,
+      product.sku, product.name, TYPE_LABELS[product.type], product.brand ?? '', product.costPrice,
       product.salePrice, product.supplier ?? '', product.active ? 'Đang kinh doanh' : 'Ngừng kinh doanh',
     ]));
     this.formatGrid(worksheet, PRODUCT_EXPORT_HEADERS.length, products.length + 1);
     colorRequiredHeaderAsterisks(worksheet, PRODUCT_EXPORT_HEADERS);
+    worksheet.getColumn(5).numFmt = '#,##0';
     worksheet.getColumn(6).numFmt = '#,##0';
-    worksheet.getColumn(7).numFmt = '#,##0';
     return Buffer.from(await workbook.xlsx.writeBuffer());
   }
 

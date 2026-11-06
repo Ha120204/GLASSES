@@ -31,13 +31,14 @@ async function runInBatches(ids: string[], action: (id: string) => Promise<unkno
 export function ProductTrashModal({ open, onClose }: ProductTrashModalProps) {
   const [q, setQ] = useState('');
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [selectedNames, setSelectedNames] = useState<Record<string, string>>({});
   const [failedItems, setFailedItems] = useState<{ name: string; reason: string }[]>([]);
   const [bulkPending, setBulkPending] = useState<'restore' | 'delete' | null>(null);
   const [messageApi, contextHolder] = message.useMessage();
   const { data, isFetching, isError } = useDeletedProductsQuery(
-    { q: q || undefined, page, pageSize: 10 },
+    { q: q || undefined, page, pageSize },
     { skip: !open },
   );
   const [restoreProduct, restoreState] = useRestoreProductMutation();
@@ -54,6 +55,7 @@ export function ProductTrashModal({ open, onClose }: ProductTrashModalProps) {
     if (busy) return;
     setQ('');
     setPage(1);
+    setPageSize(10);
     setSelectedIds([]);
     setSelectedNames({});
     setFailedItems([]);
@@ -175,7 +177,7 @@ export function ProductTrashModal({ open, onClose }: ProductTrashModalProps) {
     <Input
       allowClear
       prefix={<SearchOutlined />}
-      placeholder="Tìm tên, mã sản phẩm hoặc mã vạch"
+      placeholder="Tìm tên hoặc mã sản phẩm"
       value={q}
       onChange={(event) => { setQ(event.target.value); setPage(1); setSelectedIds([]); setSelectedNames({}); setFailedItems([]); }}
       disabled={busy}
@@ -218,12 +220,14 @@ export function ProductTrashModal({ open, onClose }: ProductTrashModalProps) {
       size="small"
       locale={{ emptyText: isError ? 'Không thể tải thùng rác. Vui lòng thử lại.' : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Thùng rác đang trống" /> }}
       pagination={{
-        current: data?.page ?? page,
-        pageSize: data?.pageSize ?? 10,
+        current: page,
+        pageSize,
         total: data?.total,
-        showSizeChanger: false,
-        hideOnSinglePage: true,
-        onChange: (nextPage) => { if (!busy) setPage(nextPage); },
+        showSizeChanger: { showSearch: false },
+        pageSizeOptions: [10, 20, 50, 100],
+        locale: { items_per_page: '/ trang' },
+        hideOnSinglePage: false,
+        onChange: (nextPage, nextPageSize) => { if (!busy) { setPage(nextPageSize === pageSize ? nextPage : 1); setPageSize(nextPageSize); } },
         showTotal: (total) => `Tổng ${total} sản phẩm`,
       }}
     />
